@@ -1,0 +1,293 @@
+---
+title: "CEE218 Assignment 3"
+author: "Ximena Hasbach"
+date: "11/1/2020"
+output:
+  html_document:
+    df_print: paged
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+1. Select one (or at most, two) outcomes of interest that can be measured at the CBG, tract, or ZCTA level in the Bay Area. They must be continuous variables (like % of households in poverty) at this scale of analysis. At least one of the outcomes must also be available in the PUMS data at the individual or household level, so that one of your analyses can make use of PUMS data specifically. At this scale of analysis, the outcome can still be a continuous variable (like individual income) or convert to a categorical variable that can be made binary (like completing a college degree or not).
+
+The outcome of interest I chose is percent employment with an independent variable of percent of population with at least a college degree. The result of the regression model is that this independent variable is statistically significant, with a very small p-value and a coefficient of 0.041. 
+```{r, echo=FALSE, message=FALSE, warning=FALSE, include=FALSE}
+
+library(tidycensus)
+library(sf)
+library(tigris)
+library(leaflet)
+library(censusapi)
+library(tidyverse)
+
+census_api_key("a69a272c3811a683a2821fb8627628bea92559ff")
+
+pums_vars_2018 <- 
+  pums_variables %>%
+  filter(year == 2018, survey == "acs5")
+
+ca_pums <- get_pums(
+  variables = c(
+    "PUMA",
+    "NP",
+    "RAC1P",
+    "HINCP",
+    "MULTG"
+  ),
+  state = "CA",
+  year = 2018,
+  survey = "acs5",
+  recode = T
+)
+
+ca_pumas <-
+  pumas("CA", cb = T, progress_bar = F)
+
+bay_county_names <-
+  c(
+    "Alameda",
+    "Contra Costa",
+    "Marin",
+    "Napa",
+    "San Francisco",
+    "San Mateo",
+    "Santa Clara",
+    "Solano",
+    "Sonoma"
+  )
+
+bay_counties <-
+  counties("CA", cb = T, progress_bar = F) %>%
+  filter(NAME %in% bay_county_names)
+
+bay_pumas <-
+  ca_pumas %>% 
+  st_centroid() %>% 
+  .[bay_counties, ] %>% 
+  st_set_geometry(NULL) %>% 
+  left_join(ca_pumas %>% select(GEOID10)) %>% 
+  st_as_sf()
+
+bay_pums <-
+  ca_pums %>% 
+  filter(PUMA %in% bay_pumas$PUMACE10)
+
+#My indep. variable is percent employment, and my dependent variabel is percent attained a college degree.
+
+bay_employed_educ_tract <- 
+  getCensus(
+    name = "acs/acs5",
+    vintage = 2018,
+    region = "tract:*",
+    key = "a69a272c3811a683a2821fb8627628bea92559ff",
+    regionin = "state:06+county:001,013,041,055,075,081,085,095,097",
+    vars = c(
+      "B23006_005E", #less than high school graduate (in labor force,employed and unemployed))
+      "B23006_006E", #less than high school graduate (in labor force, employed)
+      "B23006_007E", #less than high school graduate (in labor force, unemployed)
+      "B23006_012E", #high school graduate, includes equivalency (in labor force, employed and unemployed)
+      "B23006_013E", #high school graduate, includes equivalency (in labor force, employed)
+      "B23006_014E", #high school graduate, includes equivalency (in labor force, unemployed)
+      "B23006_019E", #some college or associate's degree (in labor force, employed and unemployed),
+      "B23006_020E", #some college or associate's degree (in labor force, employed),
+      "B23006_021E", #some college or associate's degree (in labor force, unemployed),
+      "B23006_026E", #bachelor's degree or higher (in labor force, employed and unemployed)
+      "B23006_027E", #bachelor's degree or higher (in labor force, employed)
+      "B23006_026E" #bachelor's degree or higher (in labor force, unemployed)
+    )
+  ) %>% 
+  transmute(
+    tract = paste0(state, county, tract),
+    perc_employed = (B23006_006E + B23006_013E + B23006_020E + B23006_027E) / (B23006_005E + B23006_012E + B23006_019E + B23006_026E),
+    perc_college_graduate = B23006_026E / (B23006_005E + B23006_012E + B23006_019E + B23006_026E)
+  ) %>% 
+  filter(
+    !is.na(perc_employed), 
+    !is.na(perc_college_graduate)
+  )
+```
+
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+ggplot(
+  data = bay_employed_educ_tract,
+  aes(
+      x = perc_college_graduate,
+      y = perc_employed
+    )
+) +
+  geom_point() +
+  geom_smooth(method = "lm")
+
+
+lin_reg <- lm(perc_employed ~ perc_college_graduate, bay_employed_educ_tract)
+
+summary(lin_reg)
+```
+
+
+
+The lm summary shows a our model to have a very small p-value, so we are confident in the statistical significance of the Percent College Graduate variable when considering the Percent Employment outcome. 
+
+
+2. Perform an individual or household level multiple regression analysis (with PUMS data for PUMAS in the Bay Area) using one of your outcomes of interest as the dependent variable and at least two independent variables (like language ability or commute time), which should be chosen based on some brief open-ended exploration of academic papers, news articles, or personal anecdotes that suggest a statistical relationship may be found between the independent and dependent variables. Compare your findings to those of your reviewed resources (keep in mind that if your geography and/or time period of analysis is different from that of your sources, those can be sources of differences in findings). Carefully describe your position on whether a causal claim can be made based on the results of your analysis, and feel free to comment on the degree to which your reviewed sources communicate correlation vs. causation in the same way. Be sure to make use of weights properly in the PUMS data.
+
+PUMS vars:
+HINCP: household income 
+ESP: employment status of parents
+PAOC: presence and age of own children
+WKHP: Usual hours worked per week past 12 months
+
+The dependent variable in this multiple regression will be the household income (HICP). The first dependent variable will be the percentage of households with children and only one parent (ESP), and the other dependent variable will be the usual hours worked per week in the past 12 months (WKHP). I chose these dependent variables after a literature search on trends in household incomes of single parents. I found that the majority of single parents in the United States work 40 hours per week or more (OECD, Social Policy Division, "Patterns of employment and the distribution of working hours for single parents", 2016) and that single-parent median incomes were less in 2019 than they were in 2000 (Lu et. al, 2019). I was interested in how the relationship between these variables would be depicted in a regression model. Both variables were found to be statistically significant. 
+```{r, echo=FALSE, message=FALSE, warning=FALSE, include=FALSE}
+library(tidycensus)
+
+census_api_key("a69a272c3811a683a2821fb8627628bea92559ff")
+
+pums_vars_2018 <- 
+  pums_variables %>%
+  filter(year == 2018, survey == "acs5")
+
+ca_pums <- get_pums(
+  variables = c(
+    "PUMA",
+    "NP",
+    "RAC1P",
+    "HINCP",
+    "ESP",
+    "PAOC",
+    "WKHP"
+  ),
+  state = "CA",
+  year = 2018,
+  survey = "acs5",
+  recode = T
+)
+
+ca_pumas <-
+  pumas("CA", cb = T, progress_bar = F)
+
+bay_county_names <-
+  c(
+    "Alameda",
+    "Contra Costa",
+    "Marin",
+    "Napa",
+    "San Francisco",
+    "San Mateo",
+    "Santa Clara",
+    "Solano",
+    "Sonoma"
+  )
+
+bay_counties <-
+  counties("CA", cb = T, progress_bar = F) %>%
+  filter(NAME %in% bay_county_names)
+
+bay_pumas <-
+  ca_pumas %>% 
+  st_centroid() %>% 
+  .[bay_counties, ] %>% 
+  st_set_geometry(NULL) %>% 
+  left_join(ca_pumas %>% select(GEOID10)) %>% 
+  st_as_sf()
+
+bay_pums <-
+  ca_pums %>% 
+  filter(PUMA %in% bay_pumas$PUMACE10)
+
+bay_pums_regression <-
+  bay_pums %>% 
+  filter(SPORDER == 1) %>% 
+  mutate(
+    perc_white_alone = ifelse(
+      (RAC1P_label=="White alone"),
+      1,
+      0
+    )
+  )
+```
+
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+bay_pums_regression
+
+pums_reg <- lm(HINCP ~ perc_white_alone+WKHP, bay_pums_regression)
+
+summary(pums_reg)
+
+
+```
+
+
+
+3. Perform at least one additional multiple regression analysis at the CBG, tract, or ZCTA level in the Bay Area, at which you may choose to use a similar outcome as the first analysis or a different one. Again, select at least two independent variables. Both independent and dependent variables can now come from other datasets besides the ACS, as long as they match the geographic scale of analysis. You are more than welcome to try matching this analysis with the first one as much as possible, so as to explicitly compare the results of an individual vs. ecological scale of analysis, or make this analysis completely different (in which case you should prepare a second set of literature review).
+
+Table B23007: Presence of Own Children by Family Type by Employment Status
+Independent variable: percent unemployment
+Dependent variables: percent of single female family households, presence of children under 18 in the household
+
+I  performed a literature review on how much more likely households headed by single mothers were to live in poverty compared to other family types. I found that single mothers are much more likely than married parrents and single fathers to be living in poverty, and wanted to develop a regression model that looked at the relationship between single-mother-headed households, the presence of children in the household, and employment of the head of household.
+
+https://www.ncbi.nlm.nih.gov/pmc/articles/PMC6982282/
+https://www.pewsocialtrends.org/2018/04/25/the-changing-profile-of-unmarried-parents/
+
+Both of the dependent variables were found to be statistically significant. 
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE, include=FALSE}
+library(tidycensus)
+
+census_api_key("a69a272c3811a683a2821fb8627628bea92559ff")
+
+bay_employment_familytype <- 
+  getCensus(
+    name = "acs/acs5",
+    vintage = 2018,
+    region = "tract:*",
+    key = "a69a272c3811a683a2821fb8627628bea92559ff",
+    regionin = "state:06+county:001,013,041,055,075,081,085,095,097",
+    vars = c(
+      "B23007_001E", #total
+      "B23007_002E", #with own children under 18 years (all family types)
+      "B23007_008E", #with own children under 18, married couple family, husband employed, wife unemployed
+      "B23007_012E", #with own children under 18, married couple family, husband unemployed, wife employed
+      "B23007_013E", #with own children under 18, married couple family, husband unemployed, wife unemployed
+      "B23007_014E", #with own children under 18, married couple family, husband unemployed, wife not in labor force
+      "B23007_018E", #with own children under 18, married couple family, husband not in labor force, wife unemployed
+      "B23007_024E", #with own children under 18, single male householder, unemployed
+      "B23007_026E", #with own children under 18, single female householder, all employment types
+      "B23007_029E", #with own children under 18, single female householder, unemployed
+      "B23007_037E", #NO children under 18, married couple family, husband employed, wife unemployed
+      "B23007_041E", #NO children under 18, married couple family, husband unemployed, wife employed
+      "B23007_042E", #NO children under 18, married couple family, husband unemployed, wife unemployed
+      "B23007_043E", #NO children under 18, married couple family, husband unemployed, wife not in labor force
+      "B23007_047E", #NO children under 18, married couple family, husband not in labor force, wife unemployed
+      "B23007_053E", #NO children under 18, single male householder, unemployed
+      "B23007_058E" #NO children under 18, single female householder, unemployed
+    )
+  ) %>% 
+  transmute(
+    tract = paste0(state, county, tract),
+    perc_unemployed = (B23007_008E + B23007_012E + B23007_013E + B23007_014E + B23007_018E + B23007_024E + B23007_029E + B23007_037E + B23007_041E + B23007_042E + B23007_043E + B23007_047E + B23007_053E + B23007_058E) / B23007_001E,
+    perc_single_mother = B23007_026E/B23007_001E,
+    perc_children_under_18 = B23007_002E/B23007_001E
+  ) %>% 
+  filter(
+    !is.na(perc_unemployed), 
+    !is.na(perc_single_mother),
+    !is.na(perc_children_under_18)
+  )
+```
+
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+bay_employment_familytype
+
+
+mult_lin_reg <- lm(perc_unemployed ~ perc_single_mother+perc_children_under_18, bay_employment_familytype)
+
+summary(mult_lin_reg)
+```
