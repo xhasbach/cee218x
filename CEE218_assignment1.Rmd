@@ -1,0 +1,409 @@
+---
+title: "CEE218X Assignment 1"
+author: "Ximena Hasbach"
+date: "10/18/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+Electricity chart for the Bay Area, from PG&E data:
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+setwd('/Users/xhasbach/Downloads')
+library(tidyverse)
+library(readr)
+library(plotly)
+
+years <- 2017:2020
+quarters <- 1:4
+type <- "Electric"
+
+pgeElec17to20 <- NULL
+fileName <- NULL
+
+for(year in years){
+ for(quarter in quarters){
+  if(!(year==2020&quarter==4)){
+  
+   fileName <- paste0("PGE_", year, "_Q", quarter, "_", type,  "UsageByZip.csv")
+   print(fileName)
+   temp <- read_csv(fileName)
+   pgeElec17to20 <- rbind(pgeElec17to20, temp)
+   saveRDS(pgeElec17to20, "pgeElec17to20.rds")
+  }
+ }
+}
+
+pgeFilter <- filter(pgeElec17to20, CUSTOMERCLASS %in% c("Elec- Residential", "Elec-Commercial"))
+
+pgeFinal1 <- pgeElec17to20 %>% 
+  filter(
+    CUSTOMERCLASS %in%
+      c(
+        "Elec- Residential",
+        "Elec- Commercial"
+      )
+  )%>%
+  select(
+    !c(COMBINED, AVERAGEKWH)
+  )%>%
+  group_by(ZIPCODE,YEAR,MONTH, CUSTOMERCLASS) %>%
+  summarize(
+    TOTALKWH = 
+      sum(
+        TOTALKWH,
+        na.rm = T
+      ),
+    TOTALCUSTOMERS = 
+      sum(
+        TOTALCUSTOMERS,
+        na.rm = T
+      )
+  ) %>%
+  mutate(
+    AVERAGEKWH = 
+      TOTALKWH/TOTALCUSTOMERS
+  )
+
+for(i in 1:nrow(pgeFinal1))
+{
+  
+  pgeFinal1$TOTALBTU[i] <- pgeFinal1$TOTALKWH[i]*3.412
+  
+  if(pgeFinal1$YEAR[i]==2018)
+  {
+   pgeFinal1$MONTH[i] <- (12+pgeFinal1$MONTH[i])
+  }
+  else if(pgeFinal1$YEAR[i]==2019)
+  {
+    pgeFinal1$MONTH[i] <- (24+pgeFinal1$MONTH[i])
+  }
+  else if(pgeFinal1$YEAR[i]==2020)
+  {
+    pgeFinal1$MONTH[i] <- (36+pgeFinal1$MONTH[i])
+  }
+}
+
+pgeElecChart <- 
+  pgeFinal1 %>%
+  ggplot() +
+  geom_bar(aes(
+      x = MONTH %>% factor(),
+      y = TOTALBTU,
+      fill = CUSTOMERCLASS
+    ), 
+    stat = "identity",
+    position = "stack"
+  )+theme(text = element_text(size = 7.5))+
+  labs(
+    x = "Month",
+    y = "kBTU",
+    title = "PG&E Territory Monthly Electricity Usage, 2017-2020",
+    fill = "Electricity Type"
+  )
+
+pgeElecChart
+```
+
+The PG&E Electricity Usage chart above has an x-axis showing the month number, from 1-45, representing January 2017-September 2020. We can see from the kBTU of electricity used each month in the years 2017-2020, electricity use overall (commercial and residential combined) peaks in the summer months, particularly July and August. The overall electricity use dips in April of each year. There is an outlier in September of 2017, where the commercial and residential values are both much higher than average. This is likely an error. There is not an obvious change in electricity use due to the COVID-19 pandemic.
+
+Gas chart:
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+setwd('/Users/xhasbach/Downloads')
+library(tidyverse)
+library(readr)
+library(plotly)
+
+years <- 2017:2020
+quarters <- 1:4
+type <- "Gas"
+
+pgeGas17to20 <- NULL
+fileName <- NULL
+
+for(year in years){
+ for(quarter in quarters){
+  if(!(year==2020&quarter==4)){
+  
+   fileName <- paste0("PGE_", year, "_Q", quarter, "_", type,  "UsageByZip.csv")
+   print(fileName)
+   temp <- read_csv(fileName)
+   pgeGas17to20 <- rbind(pgeGas17to20, temp)
+   saveRDS(pgeGas17to20, "pgeGas17to20.rds")
+  }
+ }
+}
+
+pgeFilter <- filter(pgeGas17to20, CUSTOMERCLASS %in% c("Gas- Residential", "Gas-Commercial"))
+
+pgeFinal2 <- pgeGas17to20 %>% 
+  filter(
+    CUSTOMERCLASS %in%
+      c(
+        "Gas- Residential",
+        "Gas- Commercial"
+      )
+  )%>%
+  select(
+    !c(COMBINED, AVERAGETHM)
+  )%>%
+  group_by(YEAR,MONTH, CUSTOMERCLASS) %>%
+  summarize(
+    TOTALTHM = 
+      sum(
+        TOTALTHM,
+        na.rm = T
+      ),
+    TOTALCUSTOMERS = 
+      sum(
+        TOTALCUSTOMERS,
+        na.rm = T
+      )
+  ) %>%
+  mutate(
+    AVERAGETHM = 
+      TOTALTHM/TOTALCUSTOMERS
+  )
+
+for(i in 1:nrow(pgeFinal2))
+{
+  
+  pgeFinal2$TOTALBTU[i] <- pgeFinal2$TOTALTHM[i]*100
+  
+  if(pgeFinal2$YEAR[i]==2018)
+  {
+   pgeFinal2$MONTH[i] <- (12+pgeFinal2$MONTH[i])
+  }
+  else if(pgeFinal2$YEAR[i]==2019)
+  {
+    pgeFinal2$MONTH[i] <- (24+pgeFinal2$MONTH[i])
+  }
+  else if(pgeFinal2$YEAR[i]==2020)
+  {
+    pgeFinal2$MONTH[i] <- (36+pgeFinal2$MONTH[i])
+  }
+}
+
+pgeGasChart <- 
+  pgeFinal2 %>%
+  ggplot() +
+  geom_bar(aes(
+      x = MONTH %>% factor(),
+      y = TOTALBTU,
+      fill = CUSTOMERCLASS
+    ), 
+    stat = "identity",
+    position = "stack"
+  )+theme(text = element_text(size = 7.5))+
+  #annotate(geom = "text", x = nrow(pgeFinal), y = 34, label = pgeFinal$MONTH)+
+      #annotate(geom = "text", x =5+4*(0:3), y = 32, label = unique(pgeFinal$YEAR))+
+  labs(
+    x = "Month",
+    y = "kBTU",
+    title = "PG&E Territory Monthly Gas Usage, 2017-2020",
+    fill = "Electricity Type"
+  )
+
+pgeGasChart
+```
+
+From the gas usage chart above, it is clear that  the residential sector uses much more gas than the commercial sector. As opposed to the electricity use chart, here it seems like residential gas use is much greater than commercial gas use. 
+
+Overall chart:
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+rbind(pgeFinal1,pgeFinal2)
+
+pgeElecGasChart <- 
+  rbind(pgeFinal1,pgeFinal2) %>%
+  ggplot() +
+  geom_bar(aes(
+      x = MONTH %>% factor(),
+      y = TOTALBTU,
+      fill = CUSTOMERCLASS
+    ), 
+    stat = "identity",
+    position = "stack"
+  )+theme(text = element_text(size = 7.5))+
+  #annotate(geom = "text", x = nrow(pgeFinal), y = 34, label = pgeFinal$MONTH)+
+      #annotate(geom = "text", x =5+4*(0:3), y = 32, label = unique(pgeFinal$YEAR))+
+  labs(
+    x = "Month",
+    y = "kBTU",
+    title = "PG&E Territory Monthly Electricity and Gas Usage, 2017-2020",
+    fill = "Usage Type"
+  )
+
+pgeElecGasChart
+```
+
+From the combined four-color chart, it looks like overall energy use peaks in the colder months, from around November through March, and dips in the summer months. There is not an obvious change to energy use patterns in 2020 due to the COVID-19 pandemic. 
+
+For the pre- and post-pandemic maps, I will create two data sets from the 2017-2020  electricity: The COVID dataset will be from February 2020-September 2020. The pre-COVID data will be from the February 2019- September 2019, in order to compare the same timespan. I have chosen these dates because the first coronavirus case in the United States was declared on January 21, 2020. 
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+library(tidyverse)
+library(sf)
+library(tigris)
+library(leaflet)
+
+ca_counties <- counties("CA", cb = T, progress_bar = F)
+
+st_crs(ca_counties)
+
+bay_county_names <-
+  c(
+    "Alameda",
+    "Contra Costa",
+    "Marin",
+    "Napa",
+    "San Francisco",
+    "San Mateo",
+    "Santa Clara",
+    "Solano",
+    "Sonoma"
+  )
+
+bay_counties <-
+  counties("CA", cb = T, progress_bar = F) %>%
+  filter(NAME %in% bay_county_names)
+
+usa_zips <- 
+  zctas(cb = T, progress_bar = F)
+
+bay_zips <-
+  usa_zips %>% 
+  st_centroid() %>% 
+  .[bay_counties, ] %>% 
+  st_set_geometry(NULL) %>% 
+  left_join(usa_zips %>% select(GEOID10)) %>% 
+  st_as_sf()
+
+pge_preCOVID <- pgeFinal1 %>% 
+  filter(
+    MONTH %in%
+      seq.int(26,33)
+  )
+    
+pge_duringCOVID <- pgeFinal1 %>% 
+  filter(
+    MONTH %in%
+      c(38,39,40,41,42,43,44,45)
+  )
+
+usa_zips <- 
+  zctas(cb = T, progress_bar = F)
+
+bay_zips <-
+  usa_zips %>% 
+  st_centroid() %>% 
+  .[bay_counties, ] %>% 
+  st_set_geometry(NULL) %>% 
+  left_join(usa_zips %>% select(GEOID10)) %>% 
+  st_as_sf()
+
+pge_preCOVID_elec <-
+  pge_preCOVID %>% 
+  filter(CUSTOMERCLASS == "Elec- Residential") %>% 
+  mutate(
+    ZIPCODE = ZIPCODE %>% as.character()
+  ) %>% 
+  group_by(ZIPCODE) %>% 
+  summarize(
+    TOTALKWH = sum(TOTALKWH, na.rm = T)
+  ) %>% 
+  right_join(
+    bay_zips %>% select(GEOID10),
+    by = c("ZIPCODE" = "GEOID10")
+  ) %>% 
+  st_as_sf() %>% 
+  st_transform(4326)
+
+res_pal <- colorNumeric(
+  palette = "Blues",
+  domain = 
+    pge_preCOVID_elec$TOTALKWH
+)
+
+leaflet() %>% 
+  addTiles() %>% 
+  addPolygons(
+    data = pge_preCOVID_elec,
+    fillColor = ~res_pal(TOTALKWH),
+    color = "white",
+    opacity = 0.5,
+    fillOpacity = 0.5,
+    weight = 1,
+    label = ~paste0(
+      round(TOTALKWH), 
+      " kWh total in ",
+      ZIPCODE
+    ),
+    highlightOptions = highlightOptions(
+      weight = 2,
+      opacity = 1
+    )
+  ) %>% 
+  addLegend(
+    data = pge_preCOVID_elec,
+    pal = res_pal,
+    values = ~TOTALKWH,
+    title = "Pre-COVID kWh,<br>(Feb2019-Sept2019)"
+  )
+
+#post-covid
+
+pge_duringCOVID_elec <-
+  pge_duringCOVID %>% 
+  filter(CUSTOMERCLASS == "Elec- Residential") %>% 
+  mutate(
+    ZIPCODE = ZIPCODE %>% as.character()
+  ) %>% 
+  group_by(ZIPCODE) %>% 
+  summarize(
+    TOTALKWH = sum(TOTALKWH, na.rm = T)
+  ) %>% 
+  right_join(
+    bay_zips %>% select(GEOID10),
+    by = c("ZIPCODE" = "GEOID10")
+  ) %>% 
+  st_as_sf() %>% 
+  st_transform(4326)
+
+#pge_preCOVID_elec
+
+res_pal <- colorNumeric(
+  palette = "Blues",
+  domain = 
+    pge_duringCOVID_elec$TOTALKWH
+)
+
+leaflet() %>% 
+  addTiles() %>% 
+  addPolygons(
+    data = pge_duringCOVID_elec,
+    fillColor = ~res_pal(TOTALKWH),
+    color = "white",
+    opacity = 0.5,
+    fillOpacity = 0.5,
+    weight = 1,
+    label = ~paste0(
+      round(TOTALKWH), 
+      " kWh total in ",
+      ZIPCODE
+    ),
+    highlightOptions = highlightOptions(
+      weight = 2,
+      opacity = 1
+    )
+  ) %>% 
+  addLegend(
+    data = pge_duringCOVID_elec,
+    pal = res_pal,
+    values = ~TOTALKWH,
+    title = "COVID-era kWh,<br>(Feb2020-Sept2020)"
+  )
+```
