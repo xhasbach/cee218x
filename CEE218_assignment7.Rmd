@@ -1,0 +1,714 @@
+---
+title: "CEE218_assignment 7"
+author: "Ximena Hasbach"
+date: "11/5/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+1.
+
+I'm using the SafeGraph Neighborhood Patterns data for June 2020 to calculate emissions of visitors from San Francisco to Stanford. 
+I have assumed that these visitors are travelling from the centroid of San Francisco to the centroid of Stanford.
+
+The result is that these visitors emit 2178.699 metric tonnes of CO2 in June 2020.
+```{r, echo=FALSE, message=FALSE, warning=FALSE, include=FALSE}
+library(tigris)
+library(tidyverse)
+library(censusapi)
+library(sf)
+library(leaflet)
+library(mapboxapi)
+library(jsonlite)
+library(mapdeck)
+
+Sys.setenv(CENSUS_KEY="a69a272c3811a683a2821fb8627628bea92559ff")
+
+Sys.setenv(MAPBOX_TOKEN = "pk.eyJ1IjoieGhhc2JhY2giLCJhIjoiY2toYXdjeGhvMTZ6OTJ0azhsNWFkNnRhdSJ9.89v47Y3zHCcZ45pLzq4CKg")
+set_token("pk.eyJ1IjoieGhhc2JhY2giLCJhIjoiY2toYXdjeGhvMTZ6OTJ0azhsNWFkNnRhdSJ9.89v47Y3zHCcZ45pLzq4CKg")
+
+acs_vars_2018_5yr <-
+  listCensusMetadata(
+    name = "2018/acs/acs5",
+    type = "variables"
+  )
+
+#june_patterns <- read_csv("neighborhood_patterns.gz")
+
+#june_patterns
+
+ca_cbgs <- block_groups("CA", cb = T, progress_bar = F)
+
+#Stanford boundary, cbgs, and map
+stanford_boundary <- places("CA", cb = T, progress_bar = F) %>% 
+  filter(NAME == "Stanford")
+
+stanford_cbgs <-  
+  ca_cbgs %>% 
+  st_centroid() %>% 
+  .[stanford_boundary, ] %>% 
+  st_set_geometry(NULL) %>% 
+  left_join(ca_cbgs %>% select(GEOID)) %>% 
+  st_as_sf()
+
+```
+
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+leaflet() %>% 
+  addMapboxTiles(
+    style_id = "streets-v11",
+    username = "mapbox",
+    access_token = "pk.eyJ1IjoieGhhc2JhY2giLCJhIjoiY2toYXdjeGhvMTZ6OTJ0azhsNWFkNnRhdSJ9.89v47Y3zHCcZ45pLzq4CKg"
+  ) %>% 
+  addPolygons(
+    data = stanford_cbgs,
+    fill = F
+  )
+
+```
+
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE, include=FALSE}
+
+#SF boundary, cbgs, and map
+sf_boundary <- places("CA", cb = T, progress_bar = F)%>%
+  filter(NAME == "San Francisco")
+
+sf_cbgs <-  
+  ca_cbgs %>% 
+  st_centroid() %>% 
+  .[sf_boundary, ] %>% 
+  st_set_geometry(NULL) %>% 
+  left_join(ca_cbgs %>% select(GEOID)) %>% 
+  st_as_sf()
+
+```
+
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+
+leaflet() %>% 
+  addMapboxTiles(
+    style_id = "streets-v11",
+    username = "mapbox",
+    access_token = "pk.eyJ1IjoieGhhc2JhY2giLCJhIjoiY2toYXdjeGhvMTZ6OTJ0azhsNWFkNnRhdSJ9.89v47Y3zHCcZ45pLzq4CKg"
+  ) %>% 
+  addPolygons(
+    data = sf_cbgs,
+    fill = F
+  )
+
+```
+
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE, include=FALSE}
+
+stanford_patterns <-readRDS("stanford_patterns.rds")
+#stanford_patterns
+
+json <-
+  stanford_patterns$device_home_areas[1] %>% 
+  fromJSON() %>%
+  unlist() %>% 
+  as.data.frame() %>% 
+  rownames_to_column() %>% 
+  rename(
+    origin_cbg = "rowname",
+    device_count = "."
+  )
+
+head(json)
+
+origin_cbgs <-
+  1:nrow(stanford_patterns) %>% 
+  map_dfr(function(row){
+    
+    json <-
+      stanford_patterns$device_home_areas[row] %>% 
+      fromJSON() %>%
+      unlist() %>% 
+      as.data.frame() %>% 
+      rownames_to_column() %>% 
+      rename(
+        origin_cbg = "rowname",
+        device_count = "."
+      ) %>% 
+      mutate(
+        device_count = ifelse(
+          device_count == 4,
+          3,
+          device_count
+        )
+      )
+    
+  })
+
+origin_cbgs_merged <-
+  origin_cbgs %>% 
+  group_by(origin_cbg) %>% 
+  summarize(
+    device_count = max(device_count)
+  )
+
+home_panel_summary <- read_csv("home_panel_summary.gz")
+
+#Population counts for trips to Stanford from San Francisco origins (car trips only)
+sf_cbgs_pop <-
+  counties("CA", cb = T, progress_bar = F) %>%
+  pull(COUNTYFP) %>% 
+  map_dfr(function(x){
+    getCensus(
+      name = "acs/acs5",
+      vintage = 2018,
+      region = "block group:*",
+      regionin = paste0("state:06+county:075"),
+      vars = "B01001_001E"
+    )
+  }) %>% 
+  transmute(
+    census_block_group =
+      paste0(state,county,tract,block_group),
+    pop = B01001_001E
+  )
+
+origin_cbgs_pop <-
+  origin_cbgs_merged %>% 
+  left_join(
+    sf_cbgs_pop,
+    by = c("origin_cbg" = "census_block_group")
+  )
+
+sum(is.na(origin_cbgs_pop$pop))
+
+origin_cbgs_normalized <-
+  origin_cbgs_pop %>% 
+  filter(!is.na(pop)) %>% 
+  left_join(
+    home_panel_summary %>% 
+      select(origin_cbg = census_block_group, number_devices_residing)
+  ) %>% 
+  mutate(
+    visits = (device_count * pop / number_devices_residing) %>% round()
+  ) %>% 
+  left_join(ca_cbgs %>% select(origin_cbg = GEOID)) %>% 
+  st_as_sf()
+
+visits_pal <- colorNumeric(
+  palette = "Reds",
+  domain = origin_cbgs_normalized %>% 
+    arrange(desc(visits)) %>% 
+    pull(visits) %>% 
+    .[-c(1:6)]
+)
+
+```
+
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+
+leaflet() %>% 
+  addMapboxTiles(
+    style_id = "light-v9",
+    username = "mapbox",
+    access_token = "pk.eyJ1IjoieGhhc2JhY2giLCJhIjoiY2toYXdjeGhvMTZ6OTJ0azhsNWFkNnRhdSJ9.89v47Y3zHCcZ45pLzq4CKg"
+  ) %>% 
+  addPolygons(
+    data = stanford_cbgs,
+    fill = F
+  ) %>% 
+  addPolygons(
+    data = origin_cbgs_normalized,
+    fillColor = ~visits_pal(visits),
+    color = "red",
+    weight = 1,
+    fillOpacity = 0.75,
+    label = ~visits
+  )
+
+```
+
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE, include=FALSE}
+
+#get travel distances, from SF to Stanford
+sf_origin <-
+  sf_boundary %>% 
+  st_centroid() %>% 
+  st_coordinates()
+
+stanford_destination <-
+  stanford_boundary %>% 
+  st_centroid() %>% 
+  st_coordinates()
+
+stanford_route <- 
+  1:nrow(sf_origin) %>%
+  map_dfr(function(x){
+    mb_directions(
+      origin = sf_origin[x, ],
+      destination = stanford_destination,
+      profile = "driving-traffic",
+      access_token = "pk.eyJ1IjoieGhhc2JhY2giLCJhIjoiY2toYXdjeGhvMTZ6OTJ0azhsNWFkNnRhdSJ9.89v47Y3zHCcZ45pLzq4CKg"
+    )
+  }) %>% 
+  st_as_sf()
+
+```
+
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+
+#map route from San Francisco to Stanford
+leaflet() %>%
+  addMapboxTiles(
+    style_id = "light-v9",
+    username = "mapbox",
+    access_token = "pk.eyJ1IjoieGhhc2JhY2giLCJhIjoiY2toYXdjeGhvMTZ6OTJ0azhsNWFkNnRhdSJ9.89v47Y3zHCcZ45pLzq4CKg"
+  ) %>%
+  addPolylines(
+    data = stanford_route
+  )
+
+```
+
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE, include=FALSE}
+
+travel_time_mode <-
+  counties("CA", cb = T, progress_bar = F) %>%
+  pull(COUNTYFP) %>% 
+  map_dfr(function(x){
+    getCensus(
+      name = "acs/acs5",
+      vintage = 2018,
+      region = "block group:*",
+      regionin = paste0("state:06+county:", x),
+      vars = "group(B08134)"
+    )
+  }) %>% 
+  mutate(
+    cbg =
+      paste0(state,county,tract,block_group)
+  ) %>%
+  filter(cbg %in% origin_cbgs_normalized$origin_cbg) %>% 
+  select(!c(GEO_ID,state,county,tract,block_group,NAME) & !ends_with(c("EA","MA","M"))) %>%
+  pivot_longer(
+    ends_with("E"),
+    names_to = "variable",
+    values_to = "estimate"
+  ) %>%
+  left_join(
+    acs_vars_2018_5yr %>% 
+      select(name, label), 
+    by = c("variable" = "name")
+  ) %>% 
+  select(-variable) %>% 
+  separate(
+    label,
+    into = c(NA, NA, "total", "mode", "carpool", "time"),
+    sep = "!!"
+  ) %>% 
+  mutate(
+    mode = case_when(
+      total %in% c(
+        "Less than 10 minutes",
+        "10 to 14 minutes",
+        "15 to 19 minutes",
+        "20 to 24 minutes",
+        "25 to 29 minutes",
+        "30 to 34 minutes",
+        "35 to 44 minutes",
+        "45 to 59 minutes",
+        "60 or more minutes"
+      ) ~ "Total",
+      mode == "Drove alone" ~ mode,
+      carpool %in% c(
+        "In 2-person carpool",
+        "In 3-or-more-person carpool"
+      ) ~ carpool
+    ),
+    time = case_when(
+      mode == "Total" ~ total,
+      mode == "Drove alone" ~ carpool,
+      mode == carpool ~ time
+    )
+  ) %>% 
+  filter(!is.na(time)) %>% 
+  select(-total, -carpool) %>% 
+  pivot_wider(
+    names_from = mode,
+    values_from = estimate
+  ) %>% 
+  mutate(
+    perc_veh1 = `Drove alone`/Total,
+    perc_veh2 = `In 2-person carpool`/Total,
+    perc_veh3 = `In 3-or-more-person carpool`/Total
+  )
+
+stanford_trips <-
+  origin_cbgs_normalized %>% 
+  cbind(
+    stanford_route %>% 
+      st_set_geometry(NULL)
+  ) %>% 
+  mutate(
+    time = case_when(
+      duration < 10 ~ "Less than 10 minutes",
+      duration < 15 ~ "10 to 14 minutes",
+      duration < 20 ~ "15 to 19 minutes",
+      duration < 25 ~ "20 to 24 minutes",
+      duration < 30 ~ "25 to 29 minutes",
+      duration < 35 ~ "30 to 34 minutes",
+      duration < 45 ~ "35 to 44 minutes",
+      duration < 60 ~ "45 to 59 minutes",
+      TRUE ~ "60 or more minutes"
+    )
+  ) %>% 
+  left_join(
+    travel_time_mode %>% 
+      select(
+        origin_cbg = cbg,
+        time,
+        perc_veh1,
+        perc_veh2,
+        perc_veh3
+      ),
+    by = c("origin_cbg", "time")
+  ) %>% 
+  mutate(
+    vehicles = 
+      visits * perc_veh1 + 
+      visits * perc_veh2 / 2 +
+      visits * perc_veh3 / 3,
+    vmt = vehicles * distance * 2
+  )
+
+```
+
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE, include=FALSE}
+
+recorded_visits <- sum(stanford_trips$device_count)/
+  sum(stanford_patterns$raw_device_counts)
+
+recorded_visits
+
+sum(stanford_trips$vmt, na.rm = T)/recorded_visits
+
+
+emfac <- 
+  read_csv("EMFAC2017-ER-2011Class-BayAreaAQMD-2020-Summer-20201109160832.csv", skip = 8) %>% 
+  transmute(
+    Category = `Vehicle Category`,
+    Fuel_Type = Fuel,
+    Percent_Trips = Trips/sum(Trips),
+    Percent_Miles = VMT/sum(VMT),
+    `gCO2_Running_Exhaust` = CO2_RUNEX,
+    `gCO2_Start_Exhaust` = CO2_STREX
+  )
+
+emfac
+
+stanford_trips_ghg <-
+  emfac %>% 
+  mutate(
+    trips = Percent_Trips * sum(stanford_trips$visits, na.rm = T),
+    vmt = Percent_Miles * sum(stanford_trips$vmt, na.rm = T),
+    ghg = vmt*gCO2_Running_Exhaust + trips*gCO2_Start_Exhaust*2
+  )
+
+```
+
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+
+"Metric tonnes of CO2 for travelers visiting Stanford from San Francisco"
+sum(stanford_trips_ghg$ghg)*1e-6/recorded_visits
+```
+
+2
+
+I performed an analysis of building emissions in Santa Clara County and Contra Costa County, and then compared the two counties from 2013-2019. 
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+library(tigris)
+library(tidyverse)
+library(sf)
+library(leaflet)
+library(mapboxapi)
+
+pge_elec_emissions_factor <-
+  data.frame(
+    year = c(2013:2018),
+    factor = c(427,435,405,294,210,206)
+  )
+
+pge_elec_emissions_factor %>% 
+  ggplot() +
+  geom_line(
+    aes(
+      x = year,
+      y = factor
+    )
+  ) +
+  labs(
+    x = "Year",
+    y = "Pounds of CO2 per MHh",
+    title = "PG&E electricity emissions rate"
+  )
+
+pge_elec_emissions_factor
+
+
+pge_elec_emissions_factor <-
+  data.frame(
+    year = c(2013:2019),
+    factor = c(427,435,405,294,210,206, 204)
+  )
+
+pge_data <- 
+  2013:2019 %>% 
+  map_dfr(function(yr){
+    
+    factor <- 
+      pge_elec_emissions_factor %>% 
+      filter(year == yr) %>% 
+      pull(factor)
+    
+    1:4 %>% 
+      map_dfr(function(quarter){
+        
+        c("Electric","Gas") %>% 
+          map_dfr(function(type){
+            
+            filename <- 
+              paste0(
+                "PGE_",
+                yr,
+                "_Q",
+                quarter,
+                "_",
+                type,
+                "UsageByZip.csv"
+              )
+            
+            temp <- read_csv(filename)
+            
+            if(yr == 2017 & quarter == 4) {
+              temp <- 
+                temp %>% 
+                filter(MONTH != 9)
+            }
+            temp <-
+              temp %>% 
+              rename_all(toupper) %>% 
+              mutate(
+                TOTALKBTU = ifelse(
+                  substr(CUSTOMERCLASS,1,1) == "E",
+                  TOTALKWH * 3.412,
+                  TOTALTHM * 99.976
+                ),
+                TOTALTCO2E = ifelse(
+                  substr(CUSTOMERCLASS,1,1) == "E",
+                  TOTALKWH/1000 * factor * 0.000453592,
+                  TOTALTHM * 0.00531
+                )
+              ) %>% 
+              select(
+                ZIPCODE,
+                YEAR,
+                MONTH,
+                CUSTOMERCLASS,
+                TOTALKBTU,
+                TOTALTCO2E,
+                TOTALCUSTOMERS
+              )
+          })
+        
+      })
+    
+  })
+
+#pge_data
+
+us_zips <- 
+  zctas(cb = T, progress_bar = F)
+
+#plotting santa clara county electricity and gas data
+santa_clara_zips <- 
+  us_zips %>% 
+  st_centroid() %>% 
+  .[counties("CA", cb = T, progress_bar = F) %>% filter(NAME == "Santa Clara"), ] %>% 
+  st_set_geometry(NULL) %>% 
+  left_join(us_zips %>% select(GEOID10)) %>% 
+  st_as_sf()
+
+santa_clara_pge_data <-
+  pge_data %>% 
+  filter(ZIPCODE %in% santa_clara_zips$ZCTA5CE10) %>% 
+  filter(CUSTOMERCLASS %in% c(
+    "Elec- Commercial",
+    "Elec- Residential",
+    "Gas- Commercial",
+    "Gas- Residential"
+  )) %>% 
+  mutate(
+    ENERGYTYPE = substr(CUSTOMERCLASS,1,1)
+  ) %>% 
+  group_by(ZIPCODE, ENERGYTYPE, YEAR) %>% 
+  summarize(
+    TOTALKBTU = sum(TOTALKBTU, na.rm=T),
+    TOTALTCO2E = sum(TOTALTCO2E, na.rm=T), 
+    TOTALCUSTOMERS = mean(TOTALCUSTOMERS, na.rm=T)
+  ) %>% 
+  group_by(ENERGYTYPE, YEAR) %>%
+  summarize_at(
+    vars(TOTALKBTU,TOTALTCO2E,TOTALCUSTOMERS),
+    sum,
+    na.rm=T
+  )
+
+```
+
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+#plot Santa Clara data
+ggplot(
+  santa_clara_pge_data, 
+  aes(
+    x = as.factor(YEAR), 
+    y = TOTALKBTU/1000000
+  )
+) + 
+  geom_bar(stat = "identity", aes(fill = ENERGYTYPE), position = "dodge") + 
+  labs(x = "Year", y = "GBTU", title = "SF Annual Energy Usage, 2013 to 2019") + 
+  scale_fill_discrete(name="Energy Type",labels = c("Electricity","Gas"))
+
+ggplot(
+  santa_clara_pge_data, 
+  aes(
+    x = as.factor(YEAR), 
+    y = TOTALTCO2E
+  )
+) + 
+  geom_bar(stat = "identity", aes(fill = ENERGYTYPE), position = "dodge") + 
+  labs(x = "Year", y = "tCO2e", title = "Santa Clara Annual Energy Usage, 2013 to 2019") + 
+  scale_fill_discrete(name="Energy Type",labels = c("Electricity","Gas"))
+
+#plotting contra costa electricity and gas data
+contra_costa_zips <- 
+  us_zips %>% 
+  st_centroid() %>% 
+  .[counties("CA", cb = T, progress_bar = F) %>% filter(NAME == "Contra Costa"), ] %>% 
+  st_set_geometry(NULL) %>% 
+  left_join(us_zips %>% select(GEOID10)) %>% 
+  st_as_sf()
+
+contra_costa_pge_data <-
+  pge_data %>% 
+  filter(ZIPCODE %in% contra_costa_zips$ZCTA5CE10) %>% 
+  filter(CUSTOMERCLASS %in% c(
+    "Elec- Commercial",
+    "Elec- Residential",
+    "Gas- Commercial",
+    "Gas- Residential"
+  )) %>% 
+  mutate(
+    ENERGYTYPE = substr(CUSTOMERCLASS,1,1)
+  ) %>% 
+  group_by(ZIPCODE, ENERGYTYPE, YEAR) %>% 
+  summarize(
+    TOTALKBTU = sum(TOTALKBTU, na.rm=T),
+    TOTALTCO2E = sum(TOTALTCO2E, na.rm=T), 
+    TOTALCUSTOMERS = mean(TOTALCUSTOMERS, na.rm=T)
+  ) %>% 
+  group_by(ENERGYTYPE, YEAR) %>%
+  summarize_at(
+    vars(TOTALKBTU,TOTALTCO2E,TOTALCUSTOMERS),
+    sum,
+    na.rm=T
+  )
+
+ggplot(
+  contra_costa_pge_data, 
+  aes(
+    x = as.factor(YEAR), 
+    y = TOTALKBTU/1000000
+  )
+) + 
+  geom_bar(stat = "identity", aes(fill = ENERGYTYPE), position = "dodge") + 
+  labs(x = "Year", y = "GBTU", title = "Contra Costa County Annual Energy Usage, 2013 to 2019") + 
+  scale_fill_discrete(name="Energy Type",labels = c("Electricity","Gas"))
+
+ggplot(
+  contra_costa_pge_data, 
+  aes(
+    x = as.factor(YEAR), 
+    y = TOTALTCO2E
+  )
+) + 
+  geom_bar(stat = "identity", aes(fill = ENERGYTYPE), position = "dodge") + 
+  labs(x = "Year", y = "tCO2e", title = "Contra Costa Annual Energy Usage, 2013 to 2019") + 
+  scale_fill_discrete(name="Energy Type",labels = c("Electricity","Gas"))
+
+#comparing Santa Clara and Contra Costa electricity and gas usage
+santa_clara_pge_data
+
+for(i in 1:nrow(santa_clara_pge_data))
+{
+  santa_clara_pge_data$COUNTY[i] <- "Santa Clara"
+}
+santa_clara_pge_data
+
+for(i in 1:nrow(contra_costa_pge_data))
+{
+  contra_costa_pge_data$COUNTY[i] <- "Contra Costa"
+}
+contra_costa_pge_data
+
+total_pge <- rbind(santa_clara_pge_data, contra_costa_pge_data)
+
+total_pge_chart_1 <- 
+  total_pge %>%
+  ggplot() +
+  geom_bar(aes(
+      x = as.factor(YEAR), 
+    y = TOTALKBTU/1000000,
+      fill = factor(COUNTY)
+    ), 
+    stat = "identity",
+    position = "stack"
+  )+theme(text = element_text(size = 7.5))+
+  labs(
+    x = "Year",
+    y = "GBTU",
+    title = "PG&E Annual Energy Usage, 2013 to 2019",
+    fill = "County"
+  )
+
+total_pge_chart_1
+
+total_pge_chart_2 <-
+  total_pge %>%
+  ggplot() +
+  geom_bar(aes(
+      x = as.factor(YEAR), 
+    y = TOTALTCO2E,
+      fill = factor(COUNTY)
+    ), 
+    stat = "identity",
+    position = "stack"
+  )+theme(text = element_text(size = 7.5))+
+  labs(
+    x = "Year",
+    y = "tCO2e",
+    title = "PG&E Annual Energy Usage, 2013 to 2019",
+    fill = "County"
+  )
+
+total_pge_chart_2
+```
+
+Note that the `echo = FALSE` parameter was added to the code chunk to prevent printing of the R code that generated the plot.
