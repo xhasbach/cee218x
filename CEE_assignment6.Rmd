@@ -1,0 +1,1250 @@
+---
+title: "CEE218_assignment 6"
+author: "Ximena Hasbach"
+date: "11/26/2020"
+output:
+  html_document:
+    df_print: paged
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+Prepare a report analyzing land use and housing outcomes in one County (of your choice) in the Bay Area. You are welcome to include as many data-driven insights as you’d like, with the many kinds of housing and parcel datasets available from the Census Bureau and elsewhere, but at the minimum, you must include:
+
+1. Using techniques from Section 6.1, an analysis of housing burden for a specific sub-population of your choice (e.g. renters vs. owners, race or ethnicity, households with children). Using a burden threshold of 30% (or another of your choice), estimate the total annual funding that would be required to eliminate this kind of housing burden for your population. Include a map visualizing where this housing-burden sub-population lives in your County.
+
+First I performed an analysis of housing burden on the two sub-populations of owners and renters. I calculated the fraction of owners and renters that experience housing burden, with a threshold of 30%, within San Francisco County specifically. I have also included maps of owner and renter housing burden across San Francisco County.
+```{r, echo=FALSE, message=FALSE, warning=FALSE, include=FALSE}
+library(tidyverse)
+library(tigris)
+library(tidycensus)
+library(sf)
+library(leaflet)
+library(mapboxapi)
+library(dplyr)
+library(StatMatch)
+
+census_api_key("a69a272c3811a683a2821fb8627628bea92559ff")
+mb_access_token("pk.eyJ1IjoieGhhc2JhY2giLCJhIjoiY2toYXdjeGhvMTZ6OTJ0az#hsNWFkNnRhdSJ9.89v47Y3zHCcZ45pLzq4CKg", install = T, overwrite = TRUE)
+readRenviron("~/.Renviron")
+
+bay_county_names <-
+  c(
+    "San Francisco"
+  )
+
+bay_counties <-
+  counties("CA", cb = T, progress_bar = F) %>%
+  filter(NAME %in% bay_county_names)
+
+ca_pumas <-
+  pumas("CA", cb = T, progress_bar = F)
+
+bay_pumas <-
+  ca_pumas %>% 
+  st_centroid() %>% 
+  .[bay_counties, ] %>% 
+  st_set_geometry(NULL) %>% 
+  left_join(ca_pumas %>% select(GEOID10)) %>% 
+  st_as_sf()
+
+pums_vars_2018 <- 
+  pums_variables %>%
+  filter(year == 2018, survey == "acs5")
+
+#from assignment 3
+pums_vars_2018 <- 
+  pums_variables %>%
+  filter(year == 2018, survey == "acs5")
+
+ca_pums <- get_pums(
+  variables = c(
+    "PUMA",
+    "GRNTP",
+    "SMOCP",
+    "ADJHSG",
+    "HINCP",
+    "ADJINC"
+  ),
+  state = "CA",
+  year = 2018,
+  survey = "acs5",
+  recode = T
+)
+
+bay_pums <-
+  ca_pums %>% 
+  filter(PUMA %in% bay_pumas$PUMACE10)
+
+burden_threshold <- 0.3
+
+#for owners
+owner_bay_burden <-
+  bay_pums %>% 
+  filter(HINCP > 0) %>%
+  filter(SPORDER == 1) %>% 
+  transmute(
+    PUMA = PUMA,
+    weight = WGTP,
+    housingcost = 
+      SMOCP*12*as.numeric(ADJHSG),
+    income = HINCP*as.numeric(ADJINC),
+    burden_perc = housingcost/income,
+    burden_30 = housingcost - burden_threshold*income,
+    incomegap_30 = housingcost/burden_threshold - income
+  )
+
+owner_burden_pumas <-
+  owner_bay_burden %>% 
+  mutate(
+    burdened_30 = ifelse(
+      burden_perc >= burden_threshold,
+      weight,
+      0
+    ),
+    excess_30 = ifelse(
+      burden_30 < 0,
+      burden_30,
+      0
+    ),
+    burden_30 = ifelse(
+      burden_30 > 0,
+      burden_30,
+      0
+    ),
+    incomegap_30 = ifelse(
+      incomegap_30 > 0,
+      incomegap_30,
+      0
+    )
+  ) %>% 
+  group_by(PUMA) %>% 
+  summarize(
+    burdened_30 = sum(burdened_30),
+    households = sum(weight),
+    burden_30 = sum(burden_30*weight),
+    incomegap_30 = sum(incomegap_30*weight),
+    excess_30 = sum(excess_30*weight)
+  ) %>% 
+  mutate(
+    burdened_30_perc = burdened_30/households
+  ) %>% 
+  left_join(bay_pumas %>% select(PUMA = PUMACE10)) %>% 
+  st_as_sf()
+```
+
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+#owner_burden_pumas
+
+"Proportion of owners paying more than 30% of their income on housing"
+sum(owner_burden_pumas$burdened_30)/sum(owner_burden_pumas$households)
+```
+
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE, include=FALSE}
+#for renters
+renter_bay_burden <-
+  bay_pums %>% 
+  filter(HINCP > 0) %>%
+  filter(SPORDER == 1) %>% 
+  transmute(
+    PUMA = PUMA,
+    weight = WGTP,
+    housingcost =
+      GRNTP*12*as.numeric(ADJHSG),
+    income = HINCP*as.numeric(ADJINC),
+    burden_perc = housingcost/income,
+    burden_30 = housingcost - burden_threshold*income,
+    incomegap_30 = housingcost/burden_threshold - income
+  )
+
+renter_burden_pumas <-
+  renter_bay_burden %>% 
+  mutate(
+    burdened_30 = ifelse(
+      burden_perc >= burden_threshold,
+      weight,
+      0
+    ),
+    excess_30 = ifelse(
+      burden_30 < 0,
+      burden_30,
+      0
+    ),
+    burden_30 = ifelse(
+      burden_30 > 0,
+      burden_30,
+      0
+    ),
+    incomegap_30 = ifelse(
+      incomegap_30 > 0,
+      incomegap_30,
+      0
+    )
+  ) %>% 
+  group_by(PUMA) %>% 
+  summarize(
+    burdened_30 = sum(burdened_30),
+    households = sum(weight),
+    burden_30 = sum(burden_30*weight),
+    incomegap_30 = sum(incomegap_30*weight),
+    excess_30 = sum(excess_30*weight)
+  ) %>% 
+  mutate(
+    burdened_30_perc = burdened_30/households
+  ) %>% 
+  left_join(bay_pumas %>% select(PUMA = PUMACE10)) %>% 
+  st_as_sf()
+
+```
+
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+"Proportion of renters paying more than 30% of their income on housing"
+sum(renter_burden_pumas$burdened_30)/sum(renter_burden_pumas$households)
+
+#visualize owner burden
+burden_pal1 <- colorNumeric(
+  palette = "Purples",
+  domain = owner_burden_pumas$burdened_30_perc
+)
+
+owner_burden_pumas %>% 
+  leaflet() %>% 
+  addMapboxTiles(
+    style_id = "streets-v11",
+    username = "mapbox"
+  ) %>% 
+  addPolygons(
+    fillColor = ~burden_pal1(burdened_30_perc),
+    fillOpacity = 0.5,
+    color = "white",
+    weight = 0.5,
+    label = ~paste0(round(burdened_30_perc*100), "% of households paying 30%+ of income on housing"),
+    highlightOptions = highlightOptions(
+      weight = 2
+    )
+  ) %>% 
+  addLegend(
+    pal = burden_pal1,
+    values = ~burdened_30_perc,
+    title = "% Cost-burdened<br>owned<br>households"
+  )
+
+#visualize renter burden
+burden_pal1 <- colorNumeric(
+  palette = "Purples",
+  domain = renter_burden_pumas$burdened_30_perc
+)
+
+owner_burden_pumas %>% 
+  leaflet() %>% 
+  addMapboxTiles(
+    style_id = "streets-v11",
+    username = "mapbox"
+  ) %>% 
+  addPolygons(
+    fillColor = ~burden_pal1(burdened_30_perc),
+    fillOpacity = 0.5,
+    color = "white",
+    weight = 0.5,
+    label = ~paste0(round(burdened_30_perc*100), "% of households paying 30%+ of income on housing"),
+    highlightOptions = highlightOptions(
+      weight = 2
+    )
+  ) %>% 
+  addLegend(
+    pal = burden_pal1,
+    values = ~burdened_30_perc,
+    title = "% Cost-burdened<br>rented<br>households"
+  )
+
+```
+
+Next I broke up the owner sub-population into three sub-sub-populations based on race and ethnicity: one for white owners, one for Black owners, and one for Hispanic/Latino owners. I performed an analysis of housing burden on these sub-sub-populations. I calculated the fraction of these groups of owners that experience housing burden, with a threshold of 30%, within San Francisco County specifically. I have also included maps of each of these owner group's housing burden across San Francisco County. I found that 8.56% of white owners, 9.16% of Black owners, and 7.8% of Hispanic/Latino owners experience housing burden.
+
+I did the same for the renter sub-population, finding that 20.74% of white renters, 39.34% of Black renters, and 33.83% of Hispanic/Latino renters experience housing burden.
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE, include=FALSE}
+library(tidyverse)
+library(tigris)
+library(tidycensus)
+library(sf)
+library(leaflet)
+library(mapboxapi)
+library(dplyr)
+library(StatMatch)
+
+census_api_key("a69a272c3811a683a2821fb8627628bea92559ff")
+mb_access_token("pk.eyJ1IjoieGhhc2JhY2giLCJhIjoiY2toYXdjeGhvMTZ6OTJ0az#hsNWFkNnRhdSJ9.89v47Y3zHCcZ45pLzq4CKg", install = T, overwrite = TRUE)
+readRenviron("~/.Renviron")
+
+bay_county_names <-
+  c(
+    "San Francisco"
+  )
+
+bay_counties <-
+  counties("CA", cb = T, progress_bar = F) %>%
+  filter(NAME %in% bay_county_names)
+
+ca_pumas <-
+  pumas("CA", cb = T, progress_bar = F)
+
+bay_pumas <-
+  ca_pumas %>% 
+  st_centroid() %>% 
+  .[bay_counties, ] %>% 
+  st_set_geometry(NULL) %>% 
+  left_join(ca_pumas %>% select(GEOID10)) %>% 
+  st_as_sf()
+
+pums_vars_2018 <- 
+  pums_variables %>%
+  filter(year == 2018, survey == "acs5")
+
+#from assignment 3
+pums_vars_2018 <- 
+  pums_variables %>%
+  filter(year == 2018, survey == "acs5")
+
+ca_pums <- get_pums(
+  variables = c(
+    "PUMA",
+    "GRNTP",
+    "SMOCP",
+    "ADJHSG",
+    "HINCP",
+    "ADJINC",
+    "RAC1P",
+    "HISP"
+  ),
+  state = "CA",
+  year = 2018,
+  survey = "acs5",
+  recode = T
+)
+
+bay_pums <-
+  ca_pums %>% 
+  filter(PUMA %in% bay_pumas$PUMACE10)
+
+#bay_pums
+
+burden_threshold <- 0.3
+
+#for white owners
+white_owner_bay_burden <-
+  bay_pums %>% 
+  filter(HINCP > 0) %>%
+  filter(RAC1P_label == "White alone") %>%
+  filter(SPORDER == 1) %>% 
+  transmute(
+    PUMA = PUMA,
+    weight = WGTP,
+    housingcost = 
+      SMOCP*12*as.numeric(ADJHSG),
+    income = HINCP*as.numeric(ADJINC),
+    burden_perc = housingcost/income,
+    burden_30 = housingcost - burden_threshold*income,
+    incomegap_30 = housingcost/burden_threshold - income
+  )
+
+#white_owner_bay_burden
+#owner_bay_burden
+
+white_owner_burden_pumas <-
+  white_owner_bay_burden %>% 
+  mutate(
+    burdened_30 = ifelse(
+      burden_perc >= burden_threshold,
+      weight,
+      0
+    ),
+    excess_30 = ifelse(
+      burden_30 < 0,
+      burden_30,
+      0
+    ),
+    burden_30 = ifelse(
+      burden_30 > 0,
+      burden_30,
+      0
+    ),
+    incomegap_30 = ifelse(
+      incomegap_30 > 0,
+      incomegap_30,
+      0
+    )
+  ) %>% 
+  group_by(PUMA) %>% 
+  summarize(
+    burdened_30 = sum(burdened_30),
+    households = sum(weight),
+    burden_30 = sum(burden_30*weight),
+    incomegap_30 = sum(incomegap_30*weight),
+    excess_30 = sum(excess_30*weight)
+  ) %>% 
+  mutate(
+    burdened_30_perc = burdened_30/households
+  ) %>% 
+  left_join(bay_pumas %>% select(PUMA = PUMACE10)) %>% 
+  st_as_sf()
+
+#for Black owners
+black_owner_bay_burden <-
+  bay_pums %>% 
+  filter(HINCP > 0) %>%
+  filter(RAC1P_label == "Black or African American alone") %>%
+  filter(SPORDER == 1) %>% 
+  transmute(
+    PUMA = PUMA,
+    weight = WGTP,
+    housingcost = 
+      SMOCP*12*as.numeric(ADJHSG),
+    income = HINCP*as.numeric(ADJINC),
+    burden_perc = housingcost/income,
+    burden_30 = housingcost - burden_threshold*income,
+    incomegap_30 = housingcost/burden_threshold - income
+  )
+
+#black_owner_bay_burden
+#white_owner_bay_burden
+#owner_bay_burden
+
+black_owner_burden_pumas <-
+  black_owner_bay_burden %>% 
+  mutate(
+    burdened_30 = ifelse(
+      burden_perc >= burden_threshold,
+      weight,
+      0
+    ),
+    excess_30 = ifelse(
+      burden_30 < 0,
+      burden_30,
+      0
+    ),
+    burden_30 = ifelse(
+      burden_30 > 0,
+      burden_30,
+      0
+    ),
+    incomegap_30 = ifelse(
+      incomegap_30 > 0,
+      incomegap_30,
+      0
+    )
+  ) %>% 
+  group_by(PUMA) %>% 
+  summarize(
+    burdened_30 = sum(burdened_30),
+    households = sum(weight),
+    burden_30 = sum(burden_30*weight),
+    incomegap_30 = sum(incomegap_30*weight),
+    excess_30 = sum(excess_30*weight)
+  ) %>% 
+  mutate(
+    burdened_30_perc = burdened_30/households
+  ) %>% 
+  left_join(bay_pumas %>% select(PUMA = PUMACE10)) %>% 
+  st_as_sf()
+
+#For Hispanic/Latino owners
+hisp_owner_bay_burden <-
+  bay_pums %>% 
+  filter(HINCP > 0) %>%
+  filter(HISP > 01) %>%
+  filter(SPORDER == 1) %>% 
+  transmute(
+    PUMA = PUMA,
+    weight = WGTP,
+    housingcost = 
+      SMOCP*12*as.numeric(ADJHSG),
+    income = HINCP*as.numeric(ADJINC),
+    burden_perc = housingcost/income,
+    burden_30 = housingcost - burden_threshold*income,
+    incomegap_30 = housingcost/burden_threshold - income
+  )
+
+
+#hisp_owner_bay_burden
+#black_owner_bay_burden
+#white_owner_bay_burden
+#owner_bay_burden
+
+hisp_owner_burden_pumas <-
+  hisp_owner_bay_burden %>% 
+  mutate(
+    burdened_30 = ifelse(
+      burden_perc >= burden_threshold,
+      weight,
+      0
+    ),
+    excess_30 = ifelse(
+      burden_30 < 0,
+      burden_30,
+      0
+    ),
+    burden_30 = ifelse(
+      burden_30 > 0,
+      burden_30,
+      0
+    ),
+    incomegap_30 = ifelse(
+      incomegap_30 > 0,
+      incomegap_30,
+      0
+    )
+  ) %>% 
+  group_by(PUMA) %>% 
+  summarize(
+    burdened_30 = sum(burdened_30),
+    households = sum(weight),
+    burden_30 = sum(burden_30*weight),
+    incomegap_30 = sum(incomegap_30*weight),
+    excess_30 = sum(excess_30*weight)
+  ) %>% 
+  mutate(
+    burdened_30_perc = burdened_30/households
+  ) %>% 
+  left_join(bay_pumas %>% select(PUMA = PUMACE10)) %>% 
+  st_as_sf()
+
+```
+
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+#owner sums
+"Proportion of owners paying more than 30% of their income on housing"
+sum(owner_burden_pumas$burdened_30)/sum(owner_burden_pumas$households)
+"Proportion of white owners paying more than 30% of their income on housing"
+sum(white_owner_burden_pumas$burdened_30)/sum(white_owner_burden_pumas$households)
+"Proportion of Black owners paying more than 30% of their income on housing"
+sum(black_owner_burden_pumas$burdened_30)/sum(black_owner_burden_pumas$households)
+"Proportion of Hispanic/Latino owners paying more than 30% of their income on housing"
+sum(hisp_owner_burden_pumas$burdened_30)/sum(hisp_owner_burden_pumas$households)
+
+```
+
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE, include=FALSE}
+#for renters
+
+#for white renters
+white_renter_bay_burden <-
+  bay_pums %>% 
+  filter(HINCP > 0) %>%
+  filter(RAC1P_label == "White alone") %>%
+  filter(SPORDER == 1) %>% 
+  transmute(
+    PUMA = PUMA,
+    weight = WGTP,
+    housingcost =
+      GRNTP*12*as.numeric(ADJHSG),
+    income = HINCP*as.numeric(ADJINC),
+    burden_perc = housingcost/income,
+    burden_30 = housingcost - burden_threshold*income,
+    incomegap_30 = housingcost/burden_threshold - income
+  )
+
+white_renter_burden_pumas <-
+  white_renter_bay_burden %>% 
+  mutate(
+    burdened_30 = ifelse(
+      burden_perc >= burden_threshold,
+      weight,
+      0
+    ),
+    excess_30 = ifelse(
+      burden_30 < 0,
+      burden_30,
+      0
+    ),
+    burden_30 = ifelse(
+      burden_30 > 0,
+      burden_30,
+      0
+    ),
+    incomegap_30 = ifelse(
+      incomegap_30 > 0,
+      incomegap_30,
+      0
+    )
+  ) %>% 
+  group_by(PUMA) %>% 
+  summarize(
+    burdened_30 = sum(burdened_30),
+    households = sum(weight),
+    burden_30 = sum(burden_30*weight),
+    incomegap_30 = sum(incomegap_30*weight),
+    excess_30 = sum(excess_30*weight)
+  ) %>% 
+  mutate(
+    burdened_30_perc = burdened_30/households
+  ) %>% 
+  left_join(bay_pumas %>% select(PUMA = PUMACE10)) %>% 
+  st_as_sf()
+
+#for Black renters
+black_renter_bay_burden <-
+  bay_pums %>% 
+  filter(HINCP > 0) %>%
+  filter(RAC1P_label == "Black or African American alone") %>%
+  filter(SPORDER == 1) %>% 
+  transmute(
+    PUMA = PUMA,
+    weight = WGTP,
+    housingcost =
+      GRNTP*12*as.numeric(ADJHSG),
+    income = HINCP*as.numeric(ADJINC),
+    burden_perc = housingcost/income,
+    burden_30 = housingcost - burden_threshold*income,
+    incomegap_30 = housingcost/burden_threshold - income
+  )
+
+black_renter_burden_pumas <-
+  black_renter_bay_burden %>% 
+  mutate(
+    burdened_30 = ifelse(
+      burden_perc >= burden_threshold,
+      weight,
+      0
+    ),
+    excess_30 = ifelse(
+      burden_30 < 0,
+      burden_30,
+      0
+    ),
+    burden_30 = ifelse(
+      burden_30 > 0,
+      burden_30,
+      0
+    ),
+    incomegap_30 = ifelse(
+      incomegap_30 > 0,
+      incomegap_30,
+      0
+    )
+  ) %>% 
+  group_by(PUMA) %>% 
+  summarize(
+    burdened_30 = sum(burdened_30),
+    households = sum(weight),
+    burden_30 = sum(burden_30*weight),
+    incomegap_30 = sum(incomegap_30*weight),
+    excess_30 = sum(excess_30*weight)
+  ) %>% 
+  mutate(
+    burdened_30_perc = burdened_30/households
+  ) %>% 
+  left_join(bay_pumas %>% select(PUMA = PUMACE10)) %>% 
+  st_as_sf()
+
+#for Hispanic/Latino renters
+hisp_renter_bay_burden <-
+  bay_pums %>% 
+  filter(HINCP > 0) %>%
+  filter(HISP > 01) %>%
+  filter(SPORDER == 1) %>% 
+  transmute(
+    PUMA = PUMA,
+    weight = WGTP,
+    housingcost =
+      GRNTP*12*as.numeric(ADJHSG),
+    income = HINCP*as.numeric(ADJINC),
+    burden_perc = housingcost/income,
+    burden_30 = housingcost - burden_threshold*income,
+    incomegap_30 = housingcost/burden_threshold - income
+  )
+
+hisp_renter_burden_pumas <-
+  hisp_renter_bay_burden %>% 
+  mutate(
+    burdened_30 = ifelse(
+      burden_perc >= burden_threshold,
+      weight,
+      0
+    ),
+    excess_30 = ifelse(
+      burden_30 < 0,
+      burden_30,
+      0
+    ),
+    burden_30 = ifelse(
+      burden_30 > 0,
+      burden_30,
+      0
+    ),
+    incomegap_30 = ifelse(
+      incomegap_30 > 0,
+      incomegap_30,
+      0
+    )
+  ) %>% 
+  group_by(PUMA) %>% 
+  summarize(
+    burdened_30 = sum(burdened_30),
+    households = sum(weight),
+    burden_30 = sum(burden_30*weight),
+    incomegap_30 = sum(incomegap_30*weight),
+    excess_30 = sum(excess_30*weight)
+  ) %>% 
+  mutate(
+    burdened_30_perc = burdened_30/households
+  ) %>% 
+  left_join(bay_pumas %>% select(PUMA = PUMACE10)) %>% 
+  st_as_sf()
+
+```
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+
+#renter sums
+"Proportion of renters paying more than 30% of their income on housing"
+sum(renter_burden_pumas$burdened_30)/sum(renter_burden_pumas$households)
+"Proportion of white renters paying more than 30% of their income on housing"
+sum(white_renter_burden_pumas$burdened_30)/sum(white_renter_burden_pumas$households)
+"Proportion of Black renters paying more than 30% of their income on housing"
+sum(black_renter_burden_pumas$burdened_30)/sum(black_renter_burden_pumas$households)
+"Proportion of Hispanic/Latino renters paying more than 30% of their income on housing"
+sum(hisp_renter_burden_pumas$burdened_30)/sum(hisp_renter_burden_pumas$households)
+```
+Below are the maps of owner housing burden overall, as well as white, Black, and Hispanic/Latino owner housing burden, respectively.
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+#visualize overall owner burden
+burden_pal1 <- colorNumeric(
+  palette = "Purples",
+  domain = owner_burden_pumas$burdened_30_perc
+)
+
+owner_burden_pumas %>% 
+  leaflet() %>% 
+  addMapboxTiles(
+    style_id = "streets-v11",
+    username = "mapbox"
+  ) %>% 
+  addPolygons(
+    fillColor = ~burden_pal1(burdened_30_perc),
+    fillOpacity = 0.5,
+    color = "white",
+    weight = 0.5,
+    label = ~paste0(round(burdened_30_perc*100), "% of households paying 30%+ of income on housing"),
+    highlightOptions = highlightOptions(
+      weight = 2
+    )
+  ) %>% 
+  addLegend(
+    pal = burden_pal1,
+    values = ~burdened_30_perc,
+    title = "% Cost-burdened<br>owned<br>households"
+  )
+
+#visualize white owner burden
+burden_pal1 <- colorNumeric(
+  palette = "Purples",
+  domain = white_owner_burden_pumas$burdened_30_perc
+)
+
+white_owner_burden_pumas %>% 
+  leaflet() %>% 
+  addMapboxTiles(
+    style_id = "streets-v11",
+    username = "mapbox"
+  ) %>% 
+  addPolygons(
+    fillColor = ~burden_pal1(burdened_30_perc),
+    fillOpacity = 0.5,
+    color = "white",
+    weight = 0.5,
+    label = ~paste0(round(burdened_30_perc*100), "% of white households paying 30%+ of income on housing"),
+    highlightOptions = highlightOptions(
+      weight = 2
+    )
+  ) %>% 
+  addLegend(
+    pal = burden_pal1,
+    values = ~burdened_30_perc,
+    title = "% Cost-burdened<br>owned white<br>households"
+  )
+
+#visualize Black owner burden
+burden_pal1 <- colorNumeric(
+  palette = "Purples",
+  domain = black_owner_burden_pumas$burdened_30_perc
+)
+
+black_owner_burden_pumas %>% 
+  leaflet() %>% 
+  addMapboxTiles(
+    style_id = "streets-v11",
+    username = "mapbox"
+  ) %>% 
+  addPolygons(
+    fillColor = ~burden_pal1(burdened_30_perc),
+    fillOpacity = 0.5,
+    color = "white",
+    weight = 0.5,
+    label = ~paste0(round(burdened_30_perc*100), "% of Black households paying 30%+ of income on housing"),
+    highlightOptions = highlightOptions(
+      weight = 2
+    )
+  ) %>% 
+  addLegend(
+    pal = burden_pal1,
+    values = ~burdened_30_perc,
+    title = "% Cost-burdened<br>owned Black<br>households"
+  )
+
+#visualize Hispanic/Latino owner burden
+burden_pal1 <- colorNumeric(
+  palette = "Purples",
+  domain = hisp_owner_burden_pumas$burdened_30_perc
+)
+
+hisp_owner_burden_pumas %>% 
+  leaflet() %>% 
+  addMapboxTiles(
+    style_id = "streets-v11",
+    username = "mapbox"
+  ) %>% 
+  addPolygons(
+    fillColor = ~burden_pal1(burdened_30_perc),
+    fillOpacity = 0.5,
+    color = "white",
+    weight = 0.5,
+    label = ~paste0(round(burdened_30_perc*100), "% of Hispanic/Latino households paying 30%+ of income on housing"),
+    highlightOptions = highlightOptions(
+      weight = 2
+    )
+  ) %>% 
+  addLegend(
+    pal = burden_pal1,
+    values = ~burdened_30_perc,
+    title = "% Cost-burdened<br>owned Hispanic or<br>Latino households"
+  )
+```
+
+Below are the maps of renter housing burden overall, as well as white, Black, and Hispanic/Latino renter housing burden, respectively.
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+#visualize overall renter burden
+burden_pal1 <- colorNumeric(
+  palette = "Purples",
+  domain = renter_burden_pumas$burdened_30_perc
+)
+
+renter_burden_pumas %>% 
+  leaflet() %>% 
+  addMapboxTiles(
+    style_id = "streets-v11",
+    username = "mapbox"
+  ) %>% 
+  addPolygons(
+    fillColor = ~burden_pal1(burdened_30_perc),
+    fillOpacity = 0.5,
+    color = "white",
+    weight = 0.5,
+    label = ~paste0(round(burdened_30_perc*100), "% of households paying 30%+ of income on housing"),
+    highlightOptions = highlightOptions(
+      weight = 2
+    )
+  ) %>% 
+  addLegend(
+    pal = burden_pal1,
+    values = ~burdened_30_perc,
+    title = "% Cost-burdened<br>rented<br>households"
+  )
+
+#visualize white renter burden
+burden_pal1 <- colorNumeric(
+  palette = "Purples",
+  domain = white_renter_burden_pumas$burdened_30_perc
+)
+
+white_renter_burden_pumas %>% 
+  leaflet() %>% 
+  addMapboxTiles(
+    style_id = "streets-v11",
+    username = "mapbox"
+  ) %>% 
+  addPolygons(
+    fillColor = ~burden_pal1(burdened_30_perc),
+    fillOpacity = 0.5,
+    color = "white",
+    weight = 0.5,
+    label = ~paste0(round(burdened_30_perc*100), "% of white households paying 30%+ of income on housing"),
+    highlightOptions = highlightOptions(
+      weight = 2
+    )
+  ) %>% 
+  addLegend(
+    pal = burden_pal1,
+    values = ~burdened_30_perc,
+    title = "% Cost-burdened<br>rented white<br>households"
+  )
+
+#visualize Black renter burden
+burden_pal1 <- colorNumeric(
+  palette = "Purples",
+  domain = black_renter_burden_pumas$burdened_30_perc
+)
+
+black_renter_burden_pumas %>% 
+  leaflet() %>% 
+  addMapboxTiles(
+    style_id = "streets-v11",
+    username = "mapbox"
+  ) %>% 
+  addPolygons(
+    fillColor = ~burden_pal1(burdened_30_perc),
+    fillOpacity = 0.5,
+    color = "white",
+    weight = 0.5,
+    label = ~paste0(round(burdened_30_perc*100), "% of Black households paying 30%+ of income on housing"),
+    highlightOptions = highlightOptions(
+      weight = 2
+    )
+  ) %>% 
+  addLegend(
+    pal = burden_pal1,
+    values = ~burdened_30_perc,
+    title = "% Cost-burdened<br>rented Black<br>households"
+  )
+
+#visualize Hispanic/Latino renter burden
+burden_pal1 <- colorNumeric(
+  palette = "Purples",
+  domain = hisp_renter_burden_pumas$burdened_30_perc
+)
+
+hisp_renter_burden_pumas %>% 
+  leaflet() %>% 
+  addMapboxTiles(
+    style_id = "streets-v11",
+    username = "mapbox"
+  ) %>% 
+  addPolygons(
+    fillColor = ~burden_pal1(burdened_30_perc),
+    fillOpacity = 0.5,
+    color = "white",
+    weight = 0.5,
+    label = ~paste0(round(burdened_30_perc*100), "% of Hispanic/Latino households paying 30%+ of income on housing"),
+    highlightOptions = highlightOptions(
+      weight = 2
+    )
+  ) %>% 
+  addLegend(
+    pal = burden_pal1,
+    values = ~burdened_30_perc,
+    title = "% Cost-burdened<br>rented Hispanic or<br>Latino households"
+  )
+```
+
+2. For some location in San Francisco (i.e. one census block group’s worth of parcels, or, using techniques from Chapter 5, parcels within 5 minutes walking from a transit station), an analysis of the distribution of property uses, compared to what can be built under existing zoning, or what could be built under zoning reform through recent legislation like SB50. At the minimum, calculate “unused dwelling units” as was done in Section 6.2 for your study area.
+
+I have calculated and visualized the unused dwelling units for three census tracts in the Mission District in San Francisco. The tracts are: 020800, 020900, and 022803.
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+library(tidyverse)
+library(readxl)
+library(tigris)
+library(sf)
+library(leaflet)
+library(mapboxapi)
+
+census_api_key("a69a272c3811a683a2821fb8627628bea92559ff")
+mb_access_token("pk.eyJ1IjoieGhhc2JhY2giLCJhIjoiY2toYXdjeGhvMTZ6OTJ0az#hsNWFkNnRhdSJ9.89v47Y3zHCcZ45pLzq4CKg", install = T, overwrite = TRUE)
+readRenviron("~/.Renviron")
+
+sf_parcels_shape <- 
+  st_read("https://data.sfgov.org/api/geospatial/acdm-wktn?method=export&format=GeoJSON") %>% 
+  filter(active == "true") %>% 
+  select(
+    apn = blklot,
+    zoning = zoning_code,
+    zoning_desc = zoning_district
+  )
+
+temp <- tempfile()
+download.file("https://sfassessor.org/sites/default/files/uploaded/2020.7.10_SF_ASR_Secured_Roll_Data_2019-2020.xlsx",destfile = temp, mode = "wb")
+
+sf_secured <- read_excel(temp, sheet = "Roll Data 2019-2020")
+datakey <- read_excel(temp, sheet = "Data Key")
+usecode <- read_excel(temp, sheet = "Class Code Only")
+
+unlink(temp)
+
+datakey %>% select(`DATA NAME`, `FIELD NAME`) %>% as.data.frame()
+
+sf_parcels <-
+  sf_parcels_shape %>% 
+  left_join(
+    sf_secured %>% 
+      mutate(
+        apn = RP1PRCLID %>% 
+          str_replace(" ","")
+      )
+  )
+
+sf_parcels
+
+sum(!is.na(sf_parcels$apn))
+sum(!is.na(sf_parcels$RP1PRCLID))
+sum(!is.na(sf_parcels$zoning))
+sum(!is.na(sf_parcels$ZONE))
+
+mission_sample <-
+  tracts("CA", "San Francisco", cb = T, progress_bar = F) %>% 
+  filter(
+    TRACTCE %in% c(
+      "020800",
+      "020900",
+      "022803"
+    )
+  ) %>% 
+  st_transform(4326)
+
+#mission_sample
+
+mission_parcels <- 
+  sf_parcels %>% 
+  st_centroid() %>% 
+  .[mission_sample, ] %>% 
+  st_set_geometry(NULL) %>% 
+  left_join(sf_parcels %>% select(apn)) %>% 
+  st_as_sf() %>% 
+  filter(!is.na(RP1PRCLID))
+
+#mission_parcels
+
+mission_parcels %>% 
+  leaflet() %>% 
+  addMapboxTiles(
+    style_id = "streets-v11",
+    username = "mapbox"
+  ) %>% 
+  addPolygons(
+    fillColor = "blue",
+    color = "black",
+    weight = 0.5,
+    label = ~zoning
+  )
+
+duplicate_shapes <- 
+  mission_parcels %>% 
+  as.data.frame() %>% 
+  filter(duplicated(geometry))
+
+condo_parcels <- 
+  mission_parcels %>% 
+  filter(geometry %in% duplicate_shapes$geometry)
+
+mission_parcels %>%
+  st_set_geometry(NULL) %>% 
+  group_by(zoning, zoning_desc) %>% 
+  summarize(Freq = n())
+
+table(mission_parcels$RP1CLACDE) %>% 
+  as.data.frame() %>% 
+  left_join(usecode, by = c("Var1"= "CODE")) %>% 
+  select(Freq, DESCRIPTION)
+
+mission_parcels_clean <-
+  mission_parcels %>% 
+  mutate(
+    zoning = case_when(
+      zoning == "RM-1|RM-2" ~ "RM-2",
+      zoning_desc == "INNER SUNSET NEIGHBORHOOD COMMERCIAL" ~ "INNER SUNSET",
+      zoning_desc == "IRVING STREET NEIGHBORHOOD COMMERCIAL DISTRICT" ~ "IRVING ST",
+      TRUE ~ zoning
+    )
+  ) %>% 
+  filter(zoning != "P") %>% 
+  as.data.frame() %>% 
+  mutate(geometry = geometry %>% st_as_text()) %>% 
+  group_by(geometry) %>% 
+  summarize(
+    apn = first(apn),
+    zoning = first(zoning),
+    units = sum(UNITS, na.rm = T),
+    stories = max(STOREYNO, na.rm = T),
+    floorarea = sum(SQFT, na.rm = T)
+  ) %>% 
+  ungroup() %>%
+  select(-geometry) %>% 
+  left_join(mission_parcels %>% select(apn)) %>% 
+  st_as_sf()
+
+sf_heights <- st_read("https://data.sfgov.org/resource/h9wh-cg3m.geojson")
+
+mission_heights <-
+  sf_heights[mission_parcels_clean, ]
+
+factpal <- colorFactor(c("red","blue"), mission_heights$height)
+
+leaflet() %>% 
+  addMapboxTiles(
+    style_id = "streets-v11",
+    username = "mapbox"
+  ) %>% 
+  addPolygons(
+    data = mission_heights,
+    stroke = F,
+    fillOpacity = 0.5,
+    fillColor = ~factpal(height),
+    label = ~height
+  ) %>% 
+  addPolygons(
+    data = mission_parcels_clean,
+    fill = F,
+    color = "black",
+    weight = 0.5
+  )
+
+projection <- "+proj=utm +zone=10 +ellps=GRS80 +datum=NAD83 +units=ft +no_defs"
+
+mission_parcels_zoning <-
+  mission_parcels_clean %>% 
+  st_centroid() %>% 
+  st_join(mission_heights %>% select(gen_hght)) %>% 
+  st_set_geometry(NULL) %>% 
+  left_join(mission_parcels_clean %>% select(apn)) %>% 
+  st_as_sf() %>% 
+  st_transform(projection) %>% 
+  mutate(
+    lotarea = st_area(.) %>% as.numeric(),
+    max_floorarea = case_when(
+      zoning == "IRVING ST" ~ lotarea*2.5,
+      zoning %in% c("INNER SUNSET","RH-1","RH-2","RH-3","RM-1","RM-2") ~ lotarea*1.8,
+      zoning == "RM-3" ~ lotarea*3.6
+    ),
+    unused_floorarea = ifelse(
+      (max_floorarea - floorarea) > 0,
+      (max_floorarea - floorarea),
+      0
+    ),
+    max_units = case_when(
+      zoning %in% c("INNER SUNSET", "IRVING ST") ~ floor(lotarea/800),
+      zoning == "RH-1" ~ 1,
+      zoning == "RH-2" ~ 2,
+      zoning == "RH-3" ~ 3,
+      zoning == "RM-1" ~ pmax(3, floor(lotarea/800)),
+      zoning == "RM-2" ~ pmax(3, floor(lotarea/600)),
+      zoning == "RM-3" ~ pmax(3, floor(lotarea/400))
+    ),
+    unused_units = ifelse(
+      (max_units - units) > 0,
+      (max_units - units),
+      0
+    ),
+    max_height = ifelse(
+      is.na(gen_hght),
+      40,
+      gen_hght %>% as.numeric()
+    ),
+    max_stories = floor(max_height/11),
+    unused_stories = ifelse(
+      (max_stories - stories) > 0,
+      (max_stories - stories),
+      0
+    )
+  ) %>% 
+  st_transform(4326)
+
+sum(mission_parcels_zoning$unused_floorarea, na.rm = T)
+
+sum(mission_parcels_zoning$unused_units, na.rm = T)
+
+floorarea_pal <- colorBin(
+  palette = "Greens",
+  bins = c(0,1000,5000,10000,max(mission_parcels_zoning$unused_floorarea, na.rm = T))
+)
+
+leaflet() %>% 
+  addMapboxTiles(
+    style_id = "light-v9",
+    username = "mapbox"
+  ) %>% 
+  addPolygons(
+    data = mission_parcels_zoning,
+    fillColor = ~floorarea_pal(unused_floorarea),
+    fillOpacity = 0.75,
+    color = "white",
+    weight = 0.5,
+    label = ~round(unused_floorarea)
+  ) %>% 
+  addLegend(
+    data =mission_parcels_zoning,
+    pal = floorarea_pal,
+    values = ~unused_floorarea,
+    title = "Unused Floor Area"
+  )
+
+units_pal <- colorBin(
+  palette = "Purples",
+  bins = c(0,1,5,10,max(mission_parcels_zoning$unused_units, na.rm = T))
+)
+
+leaflet() %>% 
+  addMapboxTiles(
+    style_id = "light-v9",
+    username = "mapbox"
+  ) %>% 
+  addPolygons(
+    data = mission_parcels_zoning,
+    fillColor = ~units_pal(unused_units),
+    fillOpacity = 0.75,
+    color = "white",
+    weight = 0.5,
+    label = ~round(unused_units)
+  ) %>% 
+  addLegend(
+    data = mission_parcels_zoning,
+    pal = units_pal,
+    values = ~unused_units,
+    title = "Additional Units<br>Allowed"
+  )
+
+#stories_plot <- 
+#  mission_parcels_zoning %>% 
+#  filter(unused_stories > 0) %>% 
+#  ggplot() + 
+#  geom_sf(
+#    aes(
+#      fill = unused_stories
+#    ),
+#    lwd = 0
+#  ) + 
+#  theme(
+#    axis.text.x = element_blank(), 
+#    axis.text.y = element_blank(),
+#    axis.ticks = element_blank(),
+#    rect = element_blank()
+#  ) +
+#  labs(
+#    fill = "Unused Stories"
+#  ) +
+#  scale_fill_gradient(
+#    low = "white",
+#    high = "red"
+#  )
+
+#stories_plot
+
+#library(rayshader)
+
+#plot_gg(
+#  stories_plot,
+#  width = 10,
+#  height = 4,
+#  scale = 100
+#)
+
+#render_snapshot(
+#  "snapshot.png",
+#  clear = TRUE
+#)
+```
