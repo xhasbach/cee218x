@@ -1,0 +1,437 @@
+---
+title: "CEE218_assignment 4"
+author: "Ximena Hasbach"
+date: "11/14/2020"
+output:
+  html_document:
+    df_print: paged
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+My difference-in-difference analysis involves comparing how residential electricity use changes as temperatures in the Bay Area rise from year to year. I looked at maximum temperature values and average temperature values for the Bay Area counties during the month of September in 2019 and 2020. The county that experienced the greatest increase in both maximum and average temperatures in September 2020 compared to September 2019 was Contra Costa County. In contrast, San Francisco county experienced a relatively small change in maximum and average temperatures in these same months.  
+
+Contra Costa, September 2019 and September 2020
+Max temperatures: 82.8 and 87.8
+Avg temperatures: 69.8 to 74.2
+
+San Francisco, September 2019 and September 2020: 
+Max temperatures: 74.5 to 75.4
+Avg temperatures: 65.6 to 66.4
+
+Source: https://www.ncdc.noaa.gov/cag/county/time-series/CA-013/tavg/1/8/2019-2020?base_prd=true&begbaseyear=1901&endbaseyear=2000
+
+Therefore, my difference-in-difference analysis will determine whether there is correlation between a larger increase in maximum and average temperatures in one of the hottest months of the year for the Bay and a larger increase in residential electricity use.
+
+Residential electricity data from PG&E will be compared between Contra Costa County in September 2019 and September 2020, as well as between Contra Costa County and San Francisco County in the same time range.
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+setwd('/Users/xhasbach/Downloads')
+library(tidyverse)
+library(readr)
+library(plotly)
+library(tigris)
+library(tidycensus)
+library(sf)
+library(leaflet)
+library(mapboxapi)
+library(dplyr)
+library(StatMatch)
+
+years <- 2018:2020
+quarters <- 1:4
+type <- "Electric"
+
+pgeElec18to20 <- NULL
+fileName <- NULL
+
+for(year in years){
+ for(quarter in quarters){
+  if(!(year==2020&quarter==4)){
+  
+   fileName <- paste0("PGE_", year, "_Q", quarter, "_", type,  "UsageByZip.csv")
+   print(fileName)
+   temp <- read_csv(fileName)
+   pgeElec18to20 <- rbind(pgeElec18to20, temp)
+   saveRDS(pgeElec18to20, "pgeElec18to20.rds")
+  }
+ }
+}
+
+pgeElec18to20
+
+pge_res_elec <- pgeElec18to20 %>% 
+  filter(
+    CUSTOMERCLASS %in%
+      c(
+        "Elec- Residential"
+      )
+  )%>%
+  select(
+    !c(COMBINED, AVERAGEKWH)
+  )%>%
+  group_by(ZIPCODE,YEAR,MONTH) %>%
+  summarize(
+    TOTALKWH = 
+      sum(
+        TOTALKWH,
+        na.rm = T
+      ),
+    TOTALCUSTOMERS = 
+      sum(
+        TOTALCUSTOMERS,
+        na.rm = T
+      )
+  ) %>%
+  mutate(
+    TOTALKWH = 
+      TOTALKWH/TOTALCUSTOMERS
+  )
+
+sf_zips <- c(94102, 94103, 94104, 94105, 94107, 94108, 94109, 94110, 94111, 94112, 94114, 94115, 94116, 94117, 94118, 94119, 94120, 94121, 94122, 94123, 94124, 94125, 94126, 94127, 94129, 94130, 94131, 94132, 94133, 94134, 94137, 94139, 94140, 94141, 94142, 94143, 94144, 94145, 94146, 94147, 94151, 94158, 94159, 94160, 94161, 94163, 94164, 94172, 94177, 94188)
+
+contra_costa_zips <- c(94505, 94506, 94507, 94509, 94511, 94513, 94514, 94516, 94517, 94518, 94519, 94520, 94521, 94522, 94523, 94524, 94525, 94526, 94527, 94528, 94529, 94530, 94531, 94547, 94548, 94549, 94553, 94556, 94561, 94563, 94564, 94565, 94569, 94570, 94572, 94575, 94582, 94583, 94595, 94596, 94597, 94598, 94801, 94802, 94803, 94804, 94805, 94806, 94807, 94808, 94820, 94850)
+
+pge_sf_19 <- NULL
+pge_sf_20 <- NULL
+pge_sf_19_20 <- NULL
+pge_contra_costa_20 <- NULL
+
+pge_difference <- NULL
+COUNTY <- NULL
+
+#add pge_res_elec rows to pge_sf_19 if correct year and zip code
+
+for(i in 1:nrow(pge_res_elec))
+{
+  if((pge_res_elec$ZIPCODE[i] %in% sf_zips)&(pge_res_elec$YEAR[i] == 2019)&(pge_res_elec$MONTH[i] == 9))
+  {
+    COUNTY<- rbind(COUNTY,"San Francisco")
+    pge_difference<- rbind(pge_res_elec[i,],pge_difference)
+  }
+  else if((pge_res_elec$ZIPCODE[i] %in% sf_zips)&(pge_res_elec$YEAR[i] == 2020)&(pge_res_elec$MONTH[i] == 9))
+  {
+    COUNTY<- rbind(COUNTY,"San Francisco")
+    pge_difference<- rbind(pge_res_elec[i,],pge_difference)
+  }
+  else if ((pge_res_elec$ZIPCODE[i] %in% contra_costa_zips)&(pge_res_elec$YEAR[i] == 2019)&(pge_res_elec$MONTH[i] == 9))
+  {
+    COUNTY<- rbind(COUNTY,"Contra Costa")
+    pge_difference<- rbind(pge_res_elec[i,],pge_difference)
+  }
+  else if ((pge_res_elec$ZIPCODE[i] %in% contra_costa_zips)&(pge_res_elec$YEAR[i] == 2020)&(pge_res_elec$MONTH[i] == 9))
+  {
+    COUNTY<- rbind(COUNTY,"Contra Costa")
+    pge_difference<- rbind(pge_res_elec[i,],pge_difference)
+  }
+}
+pge_difference$COUNTY <- COUNTY
+
+pge_difference<-pge_difference[order(pge_difference$YEAR),]
+
+pge_difference_chart <- 
+  pge_difference %>%
+  ggplot() +
+  geom_bar(aes(
+      x = COUNTY %>% factor(),
+      y = TOTALKWH,
+      fill = factor(YEAR)
+    ), 
+    stat = "identity",
+    position = "stack"
+  )+theme(text = element_text(size = 7.5))+
+  labs(
+    x = "County",
+    y = "kWH",
+    title = "PG&E Residential Electricity Usage, Sept. 2019 and 2020",
+    fill = "Year"
+  )
+
+pge_difference_chart
+
+```
+
+
+
+The bar graph above shows that Contra Costa did increase its total kWH of residential electricity in September 2020 compared to September 2019, but the control county of San Francisco increased its residential electricity use, as well. 
+
+Below I've plotted two sets of maps , one set containing a map of residential electricity use in Contra Costa County in September 2019 and in September 2020, and then in the next chunk of code another set containing a map of residential electricity use in San Francisco County in September 2019 and in September 2020.  
+These maps do not show an observable difference in electricity use between the two Contra Sosta County Septembers or between how Contra Costa County increased in relation to San Francisco County.
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+pge_diff_2019 <-NULL
+pge_diff_2020 <-NULL
+
+for(i in 1:nrow(pge_difference))
+{
+  if(pge_difference$YEAR[i] == 2019)
+  {
+    pge_diff_2019 <- rbind(pge_diff_2019, pge_difference[i,])
+  }
+  else if (pge_difference$YEAR[i] == 2020)
+  {
+    pge_diff_2020 <- rbind(pge_diff_2020, pge_difference[i,])
+  }
+}
+
+#pge_diff_2019
+#pge_diff_2020
+
+bay_county_names <-
+  c(
+    "Contra Costa"
+  )
+
+bay_counties <-
+  counties("CA", cb = T, progress_bar = F) %>%
+  filter(NAME %in% bay_county_names)
+
+usa_zips <- 
+  zctas(cb = T, progress_bar = F)
+
+bay_zips <-
+  usa_zips %>% 
+  st_centroid() %>% 
+  .[bay_counties, ] %>% 
+  st_set_geometry(NULL) %>% 
+  left_join(usa_zips %>% select(GEOID10)) %>% 
+  st_as_sf()
+
+#2019 map
+pge_res_elec_2019 <-
+  pge_diff_2019 %>% 
+  mutate(
+    ZIPCODE = ZIPCODE %>% as.character()
+  ) %>% 
+  group_by(ZIPCODE) %>% 
+  summarize(
+    TOTALKWH = sum(TOTALKWH, na.rm = T)
+  ) %>% 
+  right_join(
+    bay_zips %>% select(GEOID10),
+    by = c("ZIPCODE" = "GEOID10")
+  ) %>% 
+  st_as_sf() %>% 
+  st_transform(4326)
+
+res_pal_2019 <- colorNumeric(
+  palette = "Blues",
+  domain = 
+    pge_res_elec_2019$TOTALKWH
+)
+
+
+leaflet() %>% 
+  addTiles() %>% 
+  addPolygons(
+    data = pge_res_elec_2019,
+    fillColor = ~res_pal_2019(TOTALKWH),
+    color = "white",
+    opacity = 0.5,
+    fillOpacity = 0.5,
+    weight = 1,
+    label = ~paste0(
+      round(TOTALKWH), 
+      " kWH total in ",
+      ZIPCODE
+    ),
+    highlightOptions = highlightOptions(
+      weight = 2,
+      opacity = 1
+    )
+  ) %>% 
+  addLegend(
+    data = pge_res_elec_2019,
+    pal = res_pal_2019,
+    values = c(0,200,400,600,800,1000,1200,1400),
+    title = "Total Residential<br>kWH, September 2019"
+  )
+
+#2020 map
+pge_res_elec_2020 <-
+  pge_diff_2020 %>% 
+  mutate(
+    ZIPCODE = ZIPCODE %>% as.character()
+  ) %>% 
+  group_by(ZIPCODE) %>% 
+  summarize(
+    TOTALKWH = sum(TOTALKWH, na.rm = T)
+  ) %>% 
+  right_join(
+    bay_zips %>% select(GEOID10),
+    by = c("ZIPCODE" = "GEOID10")
+  ) %>% 
+  st_as_sf() %>% 
+  st_transform(4326)
+
+res_pal_2020 <- colorNumeric(
+  palette = "Blues",
+  domain = 
+    pge_res_elec_2020$TOTALKWH
+)
+
+leaflet() %>% 
+  addTiles() %>% 
+  addPolygons(
+    data = pge_res_elec_2020,
+    fillColor = ~res_pal_2020(TOTALKWH),
+    color = "white",
+    opacity = 0.5,
+    fillOpacity = 0.5,
+    weight = 1,
+    label = ~paste0(
+      round(TOTALKWH), 
+      " kWH total in ",
+      ZIPCODE
+    ),
+    highlightOptions = highlightOptions(
+      weight = 2,
+      opacity = 1
+    )
+  ) %>% 
+  addLegend(
+    data = pge_res_elec_2020,
+    pal = res_pal_2020,
+    values = c(0,200,400,600,800,1000,1200,1400),
+    title = "Residential<br>KWH, September 2020"
+  )
+```
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+pge_diff_2019 <-NULL
+pge_diff_2020 <-NULL
+
+for(i in 1:nrow(pge_difference))
+{
+  if(pge_difference$YEAR[i] == 2019)
+  {
+    pge_diff_2019 <- rbind(pge_diff_2019, pge_difference[i,])
+  }
+  else if (pge_difference$YEAR[i] == 2020)
+  {
+    pge_diff_2020 <- rbind(pge_diff_2020, pge_difference[i,])
+  }
+}
+
+#pge_diff_2019
+#pge_diff_2020
+
+bay_county_names <-
+  c(
+    "San Francisco"
+  )
+
+bay_counties <-
+  counties("CA", cb = T, progress_bar = F) %>%
+  filter(NAME %in% bay_county_names)
+
+usa_zips <- 
+  zctas(cb = T, progress_bar = F)
+
+bay_zips <-
+  usa_zips %>% 
+  st_centroid() %>% 
+  .[bay_counties, ] %>% 
+  st_set_geometry(NULL) %>% 
+  left_join(usa_zips %>% select(GEOID10)) %>% 
+  st_as_sf()
+
+#2019 map
+pge_res_elec_2019 <-
+  pge_diff_2019 %>% 
+  mutate(
+    ZIPCODE = ZIPCODE %>% as.character()
+  ) %>% 
+  group_by(ZIPCODE) %>% 
+  summarize(
+    TOTALKWH = sum(TOTALKWH, na.rm = T)
+  ) %>% 
+  right_join(
+    bay_zips %>% select(GEOID10),
+    by = c("ZIPCODE" = "GEOID10")
+  ) %>% 
+  st_as_sf() %>% 
+  st_transform(4326)
+
+res_pal_2019 <- colorNumeric(
+  palette = "Blues",
+  domain = 
+    pge_res_elec_2019$TOTALKWH
+)
+
+
+leaflet() %>% 
+  addTiles() %>% 
+  addPolygons(
+    data = pge_res_elec_2019,
+    fillColor = ~res_pal_2019(TOTALKWH),
+    color = "white",
+    opacity = 0.5,
+    fillOpacity = 0.5,
+    weight = 1,
+    label = ~paste0(
+      round(TOTALKWH), 
+      " kWH total in ",
+      ZIPCODE
+    ),
+    highlightOptions = highlightOptions(
+      weight = 2,
+      opacity = 1
+    )
+  ) %>% 
+  addLegend(
+    data = pge_res_elec_2019,
+    pal = res_pal_2019,
+    values = c(0,50,100,150,200,250,300,350,400),
+    title = "Residential<br>kWH, September 2019"
+  )
+
+#2020 map
+pge_res_elec_2020 <-
+  pge_diff_2020 %>% 
+  mutate(
+    ZIPCODE = ZIPCODE %>% as.character()
+  ) %>% 
+  group_by(ZIPCODE) %>% 
+  summarize(
+    TOTALKWH = sum(TOTALKWH, na.rm = T)
+  ) %>% 
+  right_join(
+    bay_zips %>% select(GEOID10),
+    by = c("ZIPCODE" = "GEOID10")
+  ) %>% 
+  st_as_sf() %>% 
+  st_transform(4326)
+
+res_pal_2020 <- colorNumeric(
+  palette = "Blues",
+  domain = 
+    pge_res_elec_2020$TOTALKWH
+)
+
+leaflet() %>% 
+  addTiles() %>% 
+  addPolygons(
+    data = pge_res_elec_2020,
+    fillColor = ~res_pal_2020(TOTALKWH),
+    color = "white",
+    opacity = 0.5,
+    fillOpacity = 0.5,
+    weight = 1,
+    label = ~paste0(
+      round(TOTALKWH), 
+      " kWH total in ",
+      ZIPCODE
+    ),
+    highlightOptions = highlightOptions(
+      weight = 2,
+      opacity = 1
+    )
+  ) %>% 
+  addLegend(
+    data = pge_res_elec_2020,
+    pal = res_pal_2020,
+    values = c(0,50,100,150,200,250,300,350,400),
+    title = "Residential<br>KWH, September 2020"
+  )
+```
