@@ -1,0 +1,421 @@
+---
+title: "CEE218X Assignment 2"
+author: "Ximena Hasbach"
+date: "10/21/2020"
+output: html_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+1. An equity analysis of educational attainment by race. Plot the “stacked” and “filled” bar charts as demonstrated in 2.2; from there, you are welcome to add as many comments and supplementary visualizations as you’d like. Essentially, respond to the question: “Is there disproportionate education attainment by race in the County?” Note that the universe of the ACS datasets on educational attainment is “population 25 years or older”, so be sure to clarify that in your visuals and commentary.
+
+County: San Mateo 081
+
+C15002 is Sex By Educational Attainment For The Population 25 Years And Over
+Have to combine male and female numbers for: 003-006 (male: Less Than High School Diploma, High School Graduate, Some College or Associate's Degree, Bachelor's Degree or Higher) and 008-011 (female: Less Than High School Diploma, High School Graduate, Some College or Associate's Degree, Bachelor's Degree or Higher)
+
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+
+library(tidyverse)
+library(sf)
+library(tigris)
+library(leaflet)
+library(censusapi)
+
+Sys.setenv(CENSUS_KEY="a69a272c3811a683a2821fb8627628bea92559ff")
+
+acs_vars_2018_5yr <-
+  listCensusMetadata(
+    name = "2018/acs/acs5",
+    type = "variables"
+  )
+
+census_race_labels <- data.frame(
+  code = c("B","C","D","E","F","G","H","I"),
+  label =
+    c(
+    "Black or African American",
+    "American Indian and Alaska Native Alone",
+    "Asian Alone",
+    "Native Hawaiian and Other Pacific Islander Alone)",
+    "Some Other Race Alone",
+    "Two or More Races",
+    "White Alone (Not Hispanic or Latino)",
+    "Hispanic or Latino"
+    )
+)
+
+educ_level_labels <- data.frame(
+  code = c("003", "004", "005", "006", "008", "009", "010", "011"),
+  label = 
+    c(
+      "Less Than High School Diploma (M)",
+      "High School Graduate (M)",
+      "Some College or Associate's Degree (M)",
+      "Bachelor's Degree or Higher (M)",
+      "Less Than High School Diploma (F)",
+      "High School Graduate (F)",
+      "Some College or Associate's Degree (F)",
+      "Bachelor's Degree or Higher (F)"
+      )
+)
+
+educ_level_labels
+
+census_race_labels <- 
+  c(
+    "Black or African American",
+    "American Indian and Alaska Native Alone",
+    "Asian Alone",
+    "Native Hawaiian and Other Pacific Islander Alone)",
+    "Some Other Race Alone",
+    "Two or More Races",
+    "White Alone (Not Hispanic or Latino)",
+    "Hispanic or Latino"
+  )
+
+educ_level_labels <-
+  c(
+    "Less Than High School Diploma (M)",
+      "High School Graduate (M)",
+      "Some College or Associate's Degree (M)",
+      "Bachelor's Degree or Higher (M)",
+      "Less Than High School Diploma (F)",
+      "High School Graduate (F)",
+      "Some College or Associate's Degree (F)",
+      "Bachelor's Degree or Higher (F)"
+  )
+
+LETTERS[1:8]
+
+bay_educ_race <-
+  1:8 %>% 
+  map_dfr(function(x){
+    getCensus(
+      name = "acs/acs5",
+      vintage = 2018,
+      region = "county:081",
+      regionin = "state:06",
+      vars = paste0("group(C15002",LETTERS[(x+1)],")")
+    ) %>%
+      select(!c(GEO_ID,state,NAME) & !ends_with(c("EA","MA","M"))) %>%
+      pivot_longer(
+        ends_with("E"),
+        names_to = "variable",
+        values_to = "estimate"
+      ) %>%
+      left_join(
+        acs_vars_2018_5yr %>% 
+          select(name, label), 
+        by = c("variable" = "name")
+      ) %>% 
+      select(-variable) %>% 
+      separate(
+        label,
+        into = c(NA,NA,NA,"label"),
+        sep = "!!"
+      ) %>% 
+      filter(!is.na(label)) %>% 
+      mutate(race = census_race_labels[x])
+  })
+
+bay_educ_race
+
+bay_educ_race %>% 
+  group_by(label, race) %>% 
+  summarize(estimate = sum(estimate)) %>% 
+  ggplot() +
+  geom_bar(
+    aes(
+      x = label %>% factor(levels = bay_educ_race$label[1:4]),
+      y = estimate,
+      fill = race
+    ),
+    stat = "identity",
+    position = "fill"
+  ) +
+  labs(
+    x = "Education level",
+    y = "Proportion of households",
+    title = "Bay Area education level by race",
+    fill = "Race"
+  ) + coord_flip()+
+  theme(
+    legend.position = "bottom",
+    legend.direction = "vertical"
+  )
+```
+
+
+One assumption I made when working with these education-by-race data sets, which is a slight deviation in how similar data was plotted in the class textbook, is that the information for the white population should be drawn from the "White Alone (Not Hispanic or Latino)" dataset. I believe it is important to distinguish between Latinx people who may have Spanish ancestry and white Americans who are not Latinx. From this "Bay Area education levels by race" chart we can clearly see that the white proportion of households increases for higher levels of education, and a similar trend is observed for Asian households. The opposite is seen for Hispanic or Latino households, as well as households who describe themselves as of "Some Other Race." The Black, biracial, and Native Hawaiian/Pacific Islander populations as seen here are small in comparison to the others mentioned and do not show an obvious pattern. 
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+
+library(tidyverse)
+library(sf)
+library(tigris)
+library(leaflet)
+library(censusapi)
+
+Sys.setenv(CENSUS_KEY="a69a272c3811a683a2821fb8627628bea92559ff")
+
+acs_vars_2018_5yr <-
+  listCensusMetadata(
+    name = "2018/acs/acs5",
+    type = "variables"
+  )
+
+census_race_labels <- data.frame(
+  code = c("A","B","C","D","E","F","G"),
+  label =
+    c(
+    "White Alone",
+    "Black or African American",
+    "American Indian and Alaska Native Alone",
+    "Asian Alone",
+    "Native Hawaiian and Other Pacific Islander Alone)",
+    "Some Other Race Alone",
+    "Two or More Races"
+    )
+)
+
+educ_level_labels <- data.frame(
+  code = c("003", "004", "005", "006", "008", "009", "010", "011"),
+  label = 
+    c(
+      "Less Than High School Diploma (M)",
+      "High School Graduate (M)",
+      "Some College or Associate's Degree (M)",
+      "Bachelor's Degree or Higher (M)",
+      "Less Than High School Diploma (F)",
+      "High School Graduate (F)",
+      "Some College or Associate's Degree (F)",
+      "Bachelor's Degree or Higher (F)"
+      )
+)
+
+educ_level_labels
+
+census_race_labels <- 
+  c(
+    "White Alone",
+    "Black or African American",
+    "American Indian and Alaska Native Alone",
+    "Asian Alone",
+    "Native Hawaiian and Other Pacific Islander Alone)",
+    "Some Other Race Alone",
+    "Two or More Races"
+  )
+
+educ_level_labels <-
+  c(
+    "Less Than High School Diploma (M)",
+      "High School Graduate (M)",
+      "Some College or Associate's Degree (M)",
+      "Bachelor's Degree or Higher (M)",
+      "Less Than High School Diploma (F)",
+      "High School Graduate (F)",
+      "Some College or Associate's Degree (F)",
+      "Bachelor's Degree or Higher (F)"
+  )
+
+LETTERS[1:8]
+
+bay_educ_race <-
+  1:7 %>% 
+  map_dfr(function(x){
+    getCensus(
+      name = "acs/acs5",
+      vintage = 2018,
+      region = "county:081",
+      regionin = "state:06",
+      vars = paste0("group(C15002",LETTERS[(x)],")")
+    ) %>%
+      select(!c(GEO_ID,state,NAME) & !ends_with(c("EA","MA","M"))) %>%
+      pivot_longer(
+        ends_with("E"),
+        names_to = "variable",
+        values_to = "estimate"
+      ) %>%
+      left_join(
+        acs_vars_2018_5yr %>% 
+          select(name, label), 
+        by = c("variable" = "name")
+      ) %>% 
+      select(-variable) %>% 
+      separate(
+        label,
+        into = c(NA,NA,NA,"label"),
+        sep = "!!"
+      ) %>% 
+      filter(!is.na(label)) %>% 
+      mutate(race = census_race_labels[x])
+  })
+
+bay_educ_race
+
+bay_educ_race %>% 
+  group_by(label, race) %>% 
+  summarize(estimate = sum(estimate)) %>% 
+  ggplot() +
+  geom_bar(
+    aes(
+      x = label %>% factor(levels = bay_educ_race$label[1:4]),
+      y = estimate,
+      fill = race
+    ),
+    stat = "identity",
+    position = "fill"
+  ) +
+  labs(
+    x = "Education level",
+    y = "Proportion of households",
+    title = "Bay Area education level by race",
+    fill = "Race"
+  ) + coord_flip()+
+  theme(
+    legend.position = "bottom",
+    legend.direction = "vertical"
+  )
+```
+
+
+In my opinion the chart above, which includes some Latinx people who identify as White, but otherwise excludes this section of the population, is missing vital information, and by absorbing this more disadvantaged population into the "White" label, it inflates the number of white people with lower levels of education. Latinx identity is complex and cannot necessarily be described as a race, but it is important to see that tracking the Latinx population as a group is still useful. 
+
+
+2. An estimate of the number and percentage of K-12 students who have no internet access at home, using the latest available PUMS data. (Note that 2019 1-yr PUMS data will be available in mid-October 2020, so you might choose to update your analysis using that data at that time.) State your assumptions clearly, especially how useful the available data is for understanding the challenges of remote learning in 2020. Include a map of this metric for all PUMAs in the Bay Area.
+
+I used the HUPAC PUMS variable to obtain the number of households with children, and the ACCESS variable to obtain the number of households without Internet access. My main assumption was that K-12 students are people within households between 5 and 18 years old. I classified a household without Internet access as one whose answer to the ACCESS question was "No access to the Internet at this house, apartment, or mobile home."
+
+I don't believe this data paints a full picture of the challenges facing many students during this time of long-distance learning due to COVID. For one, the ACCESS question does not state how reliable th Internet connection is, nor how many devices are available per household member, 
+```{r, echo=FALSE, message=FALSE, warning=FALSE, include=FALSE}
+#install.packages("devtools")
+#devtools::install_github("walkerke/tidycensus")
+
+library(tidycensus)
+library(tidyverse)
+library(sf)
+library(tigris)
+library(leaflet)
+library(censusapi)
+
+census_api_key("a69a272c3811a683a2821fb8627628bea92559ff")
+
+pums_vars_2018 <- 
+  pums_variables %>%
+  filter(year == 2018, survey == "acs5")
+
+pums_vars_2018_distinct_hh <- 
+  pums_vars_2018 %>%
+  distinct(var_code, var_label, data_type, level) %>% 
+  filter(level == "housing")
+
+#View(pums_vars_2018_distinct_hh)
+
+ca_pums <- get_pums(
+  variables = c(
+    "PUMA",
+    "ACCESS",
+    "NP",
+    "HHL",
+    "HINCP",
+    "HUPAC",
+    "TEN"
+  ),
+  state = "CA",
+  year = 2018,
+  survey = "acs5",
+  recode = T
+)
+ca_pums
+ca_pumas <-
+  pumas("CA", cb = T, progress_bar = F)
+
+bay_county_names <-
+  c(
+    "Alameda",
+    "Contra Costa",
+    "Marin",
+    "Napa",
+    "San Francisco",
+    "San Mateo",
+    "Santa Clara",
+    "Solano",
+    "Sonoma"
+  )
+
+bay_counties <-
+  counties("CA", cb = T, progress_bar = F) %>%
+  filter(NAME %in% bay_county_names)
+
+bay_pumas <-
+  ca_pumas %>% 
+  st_centroid() %>% 
+  .[bay_counties, ] %>% 
+  st_set_geometry(NULL) %>% 
+  left_join(ca_pumas %>% select(GEOID10)) %>% 
+  st_as_sf()
+
+bay_pums <-
+  ca_pums %>% 
+  filter(PUMA %in% bay_pumas$PUMACE10)
+
+bay_pums_example <-
+  bay_pums %>% 
+  filter(!duplicated(SERIALNO)) %>% 
+  mutate(
+    noInternet_withKids = ifelse(
+      (HUPAC == 2) &
+        (ACCESS == 3),
+      WGTP,
+      0
+    )
+  ) %>% 
+  group_by(PUMA) %>% 
+  summarize(
+    perc_noInternet_withKids =
+      sum(noInternet_withKids, na.rm =T)/sum(WGTP, na.rm = T)*100
+  ) %>% 
+  left_join(
+    bay_pumas %>% 
+      select(PUMACE10),
+    by = c("PUMA" = "PUMACE10")
+  ) %>% 
+  st_as_sf()
+
+pums_pal <- colorNumeric(
+  palette = "Oranges",
+  domain = bay_pums_example$perc_noInternet_withKids
+)
+```
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+leaflet() %>%
+  addTiles() %>% 
+  addPolygons(
+    data = bay_pums_example,
+    fillColor = ~pums_pal(perc_noInternet_withKids),
+    color = "white",
+    opacity = 0.5,
+    fillOpacity = 0.5,
+    weight = 1,
+    label = ~paste0(
+      round(perc_noInternet_withKids), 
+      "% Households with children (K-12) and no Internet access"
+    ),
+    highlightOptions = highlightOptions(
+      weight = 2,
+      opacity = 1
+    )
+  ) %>% 
+  addLegend(
+    data = bay_pums_example,
+    pal = pums_pal,
+    values = ~perc_noInternet_withKids,
+    title = "% Households with children (K-12)<br>and no Internet access"
+  )
+```
+
