@@ -1,0 +1,157 @@
+---
+title: "Internet Access Map"
+author: "Ximena Hasbach"
+date: "12/15/2020"
+output:
+  html_document:
+    df_print: paged
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
+## R Markdown
+
+**Internet Access Map** 
+
+*This is a map created using US Census Public Use Microdata Sample data, showing what percentage of Bay Area households with children in grades K-12 do not have Internet access in their homes.* 
+```{r, echo=FALSE, message=FALSE, warning=FALSE, include=FALSE}
+#install.packages("devtools")
+#devtools::install_github("walkerke/tidycensus")
+
+library(tidycensus)
+library(tidyverse)
+library(sf)
+library(tigris)
+library(leaflet)
+library(censusapi)
+
+census_api_key("a69a272c3811a683a2821fb8627628bea92559ff")
+
+pums_vars_2018 <- 
+  pums_variables %>%
+  filter(year == 2018, survey == "acs5")
+
+pums_vars_2018_distinct_hh <- 
+  pums_vars_2018 %>%
+  distinct(var_code, var_label, data_type, level) %>% 
+  filter(level == "housing")
+
+#View(pums_vars_2018_distinct_hh)
+
+ca_pums <- get_pums(
+  variables = c(
+    "PUMA",
+    "ACCESS",
+    "NP",
+    "HHL",
+    "HINCP",
+    "HUPAC",
+    "TEN",
+    "SCHG"
+  ),
+  state = "CA",
+  year = 2018,
+  survey = "acs5",
+  recode = T
+)
+ca_pums
+ca_pumas <-
+  pumas("CA", cb = T, progress_bar = F)
+
+bay_county_names <-
+  c(
+    "Alameda",
+    "Contra Costa",
+    "Marin",
+    "Napa",
+    "San Francisco",
+    "San Mateo",
+    "Santa Clara",
+    "Solano",
+    "Sonoma"
+  )
+
+bay_counties <-
+  counties("CA", cb = T, progress_bar = F) %>%
+  filter(NAME %in% bay_county_names)
+
+bay_pumas <-
+  ca_pumas %>% 
+  st_centroid() %>% 
+  .[bay_counties, ] %>% 
+  st_set_geometry(NULL) %>% 
+  left_join(ca_pumas %>% select(GEOID10)) %>% 
+  st_as_sf()
+
+bay_pums <-
+  ca_pums %>% 
+  filter(PUMA %in% bay_pumas$PUMACE10)
+
+nums <- NULL
+for(i in 1:nrow(bay_pums))
+{
+  if(bay_pums$SCHG[i]=="bb")
+  {
+    nums <- c(nums, i)
+  }
+}
+
+bay_pums <- bay_pums[-c(nums),]
+
+bay_pums_example <-
+  bay_pums %>% 
+  filter(!duplicated(SERIALNO)) %>% 
+  mutate(
+    noInternet_withKids = ifelse(
+        ((SCHG == 02)|(SCHG == 03)|(SCHG == 04)|(SCHG == 05)|(SCHG == 06)|(SCHG == 07)|(SCHG == 08)|(SCHG == 09)|(SCHG == 10)|(SCHG == 11)|(SCHG == 12)|(SCHG == 13)|(SCHG == 14))&(ACCESS == 3),
+      WGTP,
+      0
+    )
+  ) %>% 
+  group_by(PUMA) %>% 
+  summarize(
+    perc_noInternet_withKids =
+      sum(noInternet_withKids, na.rm =T)/sum(WGTP, na.rm = T)*100
+  ) %>% 
+  left_join(
+    bay_pumas %>% 
+      select(PUMACE10),
+    by = c("PUMA" = "PUMACE10")
+  ) %>% 
+  st_as_sf()
+
+pums_pal <- colorNumeric(
+  palette = "Oranges",
+  domain = bay_pums_example$perc_noInternet_withKids
+)
+```
+
+
+```{r, echo=FALSE, message=FALSE, warning=FALSE}
+leaflet() %>%
+  addTiles() %>% 
+  addPolygons(
+    data = bay_pums_example,
+    fillColor = ~pums_pal(perc_noInternet_withKids),
+    color = "white",
+    opacity = 0.5,
+    fillOpacity = 0.5,
+    weight = 1,
+    label = ~paste0(
+      round(perc_noInternet_withKids), 
+      "% Households with children (K-12) and no Internet access"
+    ),
+    highlightOptions = highlightOptions(
+      weight = 2,
+      opacity = 1
+    )
+  ) %>% 
+  addLegend(
+    data = bay_pums_example,
+    pal = pums_pal,
+    values = ~perc_noInternet_withKids,
+    title = "% Households with children (K-12)<br>and no Internet access"
+  )
+```
